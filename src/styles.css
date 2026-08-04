@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+:root {
+  --claude-bg: #f3ebe2;
+  --claude-surface: #fbf8f4;
+  --claude-surface-2: #ede5dc;
+  --claude-text: #2b2724;
+  --claude-muted: #756d66;
+  --claude-border: #d7cec4;
+  --claude-accent: #d97757;
+  --claude-accent-dark: #a94f35;
+  --claude-accent-soft: #f1ddd3;
+  --sidebar: #f6f0e9;
+  --device-card: #f5efe8;
+  --nav-text: #5e5751;
+  --success: #5b806a;
+  --success-soft: #e5eee8;
+  --warning: #95652c;
+  --warning-soft: #f5e8d2;
+  --table-head: #f1ebe4;
+  --row-hover: #f7f1eb;
+  --insight-dark: #352f2b;
+  --insight-label: #eac0b0;
+  --hero-muted: #fff4ee;
+  --avatar: #4a4039;
+  --placeholder: #9a928b;
+  --accent-ring: rgba(217, 119, 87, 0.17);
+  --overlay: rgba(43, 39, 36, 0.32);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    min-width: 320px;
+    background: var(--claude-bg);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button,
+  input {
+    font: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  button:focus-visible,
+  input:focus-visible {
+    outline: 2px solid var(--claude-accent);
+    outline-offset: 2px;
+  }
+
+  .font-heading {
+    font-family: "Geist", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+
+  .font-body {
+    font-family: "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+
+  .font-data {
+    font-family: "Geist Mono", "SFMono-Regular", Consolas, monospace;
+  }
+}
