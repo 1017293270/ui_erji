@@ -1,0 +1,109 @@
+/* ------------------------------------------------------------------
+   EchoMind design tokens: the Claude-style interface from the
+   hand-drawn-illustration kit (paper, ink, one clay accent), plus the
+   meeting-specific colors (speakers, statuses).
+
+   Light is the default; `.dark` on <html> switches everything,
+   including the drawings (--doodle-*), which turn to chalk.
+------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+  --background: #faf9f5;
+  --foreground: #141413;
+  --card: #ffffff;
+  --card-foreground: #141413;
+  --popover: #ffffff;
+  --primary: #141413;
+  --primary-foreground: #faf9f5;
+  --secondary: #f0eee6;
+  --secondary-foreground: #3d3d3a;
+  --muted: #f0eee6;
+  --muted-foreground: #6b6a64;
+  --accent: #f0eee6;
+  --accent-foreground: #141413;
+  --destructive: #b53b2a;
+  --border: #e6e3da;
+  --input: #dcd8cd;
+  --ring: #d97757;
+  --radius: 0.75rem;
+  --sidebar: #f3f1ea;
+  --sidebar-foreground: #3d3d3a;
+  --sidebar-accent: #e8e5dc;
+  --sidebar-border: #e6e3da;
+  --clay: #d97757;
+  --clay-text: #a9502f;
+  --clay-soft: #f6e6dd;
+  --soft-line: #efece4;
+  --subtle: #8c8a82;
+  --shadow: 0 1px 2px rgb(20 20 19 / 0.04), 0 4px 16px -8px rgb(20 20 19 / 0.08);
+  --shadow-pop: 0 2px 6px rgb(20 20 19 / 0.06), 0 18px 40px -16px rgb(20 20 19 / 0.22);
+
+  --success: #4f7a5a;
+  --success-soft: #e7efe7;
+  --warning: #8a6420;
+  --warning-soft: #f5ebd5;
+  --danger-soft: #f7e3df;
+
+  /* One muted hue per voice in a meeting. */
+  --sp-1: #c96442;
+  --sp-2: #5e7f67;
+  --sp-3: #4f6d8f;
+  --sp-4: #a07a2c;
+  --sp-5: #84587a;
+  --sp-6: #4d7c80;
+
+  --font-serif: ui-serif, "New York", Georgia, "Songti SC", "Noto Serif SC", "Source Han Serif SC", "STSong", serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #262624;
+  --foreground: #f5f4ef;
+  --card: #30302e;
+  --card-foreground: #f5f4ef;
+  --popover: #30302e;
+  --primary: #f5f4ef;
+  --primary-foreground: #1f1e1d;
+  --secondary: #3a3936;
+  --secondary-foreground: #d6d4cc;
+  --muted: #2f2e2b;
+  --muted-foreground: #a6a39a;
+  --accent: #3a3936;
+  --accent-foreground: #f5f4ef;
+  --destructive: #e5735f;
+  --border: #3d3c38;
+  --input: #4a4944;
+  --ring: #d97757;
+  --sidebar: #1f1e1d;
+  --sidebar-foreground: #d6d4cc;
+  --sidebar-accent: #33322f;
+  --sidebar-border: #33322f;
+  --clay-text: #eb9677;
+  --clay-soft: #46302a;
+  --soft-line: #383733;
+  --subtle: #8f8c84;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.2), 0 6px 20px -10px rgb(0 0 0 / 0.5);
+  --shadow-pop: 0 2px 6px rgb(0 0 0 / 0.3), 0 18px 40px -16px rgb(0 0 0 / 0.7);
+
+  --success: #8db89a;
+  --success-soft: #2c3a2f;
+  --warning: #d9b26a;
+  --warning-soft: #3d3322;
+  --danger-soft: #45281f;
+
+  --sp-1: #e08a6a;
+  --sp-2: #8db197;
+  --sp-3: #8da8c6;
+  --sp-4: #cda85a;
+  --sp-5: #b98aae;
+  --sp-6: #84b1b4;
+
+  /* Drawings turn to chalk: light ink, dark fills, the same clay. */
+  --doodle-ink: #e9e7df;
+  --doodle-paper: #30302e;
+  --doodle-soft: #3d3c38;
+  --doodle-mid: #57554f;
+  --doodle-tint: #4a3128;
+}

@@ -1,0 +1,37 @@
+[package]
+name = "echomind-transcriber"
+version = "0.1.0"
+description = "EchoMind 本地语音转写：VAD、说话人分离、SenseVoice 识别"
+authors = ["evanbyte"]
+edition = "2021"
+rust-version = "1.85"
+publish = false
+
+[lib]
+name = "echomind_transcriber"
+
+[[bin]]
+name = "echomind-transcribe"
+path = "src/bin/echomind-transcribe.rs"
+
+[dependencies]
+# Official bindings. The default `static` feature links prebuilt static sherpa-onnx +
+# onnxruntime libraries (downloaded by the build script), so nothing ships as a dylib.
+sherpa-onnx = "=1.13.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+# Model downloads. Same TLS/proxy choices as apps/desktop: system TLS and system proxy.
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "blocking", "system-proxy"] }
+bzip2 = "0.6"
+tar = { version = "0.4", default-features = false }
+
+# Models are re-hashed before every transcription; with `asm`, sha2 0.10 uses the ARM
+# SHA instructions (4x faster). On x86_64 it picks SHA-NI by itself.
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+sha2 = { version = "0.10", features = ["asm"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3

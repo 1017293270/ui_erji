@@ -2,3 +2,18 @@ node_modules/
 dist/
 *.tsbuildinfo
 .DS_Store
+
+# Rust / Tauri
+target/
+apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/gen/schemas/
+
+# Swift
+native/**/.build/
+native/**/.swiftpm/
+
+# Secrets and local recordings
+.env
+.env.*
+!.env.example
+recordings/

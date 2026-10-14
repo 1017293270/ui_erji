@@ -1,0 +1,212 @@
+@import "tailwindcss";
+@import "@echomind/ui/tokens.css";
+/* In the components layer so utilities like w-[150px] can size a drawing. */
+@import "@echomind/ui/doodle.css" layer(components);
+
+@source "../../../packages/ui/src";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-popover: var(--popover);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-clay: var(--clay);
+  --color-clay-text: var(--clay-text);
+  --color-clay-soft: var(--clay-soft);
+  --color-soft-line: var(--soft-line);
+  --color-subtle: var(--subtle);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-destructive: var(--destructive);
+  --color-danger-soft: var(--danger-soft);
+  --font-serif: var(--font-serif);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --shadow-soft: var(--shadow);
+  --shadow-pop: var(--shadow-pop);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* Text people read or copy stays selectable. */
+  .selectable,
+  input,
+  textarea {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  ::selection {
+    background: var(--clay-soft);
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: default;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--foreground) 18%, transparent) transparent;
+  }
+}
+
+@layer components {
+  .serif {
+    font-family: var(--font-serif);
+    font-weight: 400;
+    letter-spacing: -0.01em;
+  }
+
+  .eyebrow {
+    font-size: 12px;
+    color: var(--muted-foreground);
+    letter-spacing: 0.02em;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+  }
+
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The window's own title-bar strip, clear of the traffic lights. Tauri drags by the
+     data-tauri-drag-region attribute next to these classes; buttons inside stay clickable. */
+  .drag {
+    -webkit-app-region: drag;
+  }
+
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+
+  /* A segment the minutes cite, flashed when someone jumps to it. */
+  .cited {
+    animation: cited 1.8s ease-out;
+  }
+
+  .fade-in {
+    animation: fade-in 0.28s ease-out both;
+  }
+
+  .slide-up {
+    animation: slide-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+
+@keyframes cited {
+  0%,
+  35% {
+    background: var(--clay-soft);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes rec-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.rec-dot {
+  animation: rec-dot 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cited,
+  .fade-in,
+  .slide-up,
+  .rec-dot {
+    animation: none;
+  }
+}
+
+/* The floating recorder window is transparent; its card draws the shape. */
+html.recorder-window,
+html.recorder-window body {
+  background: transparent;
+}

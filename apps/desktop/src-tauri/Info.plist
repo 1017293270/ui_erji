@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>EchoMind 用麦克风记录你在会议中的发言。</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>EchoMind 录制系统声音，用来记录会议里其他参会人的发言。</string>
+</dict>
+</plist>

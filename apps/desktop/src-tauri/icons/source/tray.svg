@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="5 5 38 38" width="44" height="44">
+  <!-- Menu-bar template icon: the EchoMark outline only, black on transparent (macOS tints it). -->
+  <g transform="rotate(-7 24 24)" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round">
+    <path stroke-width="3.6" d="M12.2 8.4Q24 9.2 35.8 9.7Q40.8 10 40.8 15Q40.5 22 40.7 29Q40.6 34 35.6 33.8Q31.5 33.6 27.3 33.5Q22.3 33.3 18.4 36.4Q16.8 37.8 15.1 39.1Q11.6 41.9 13.1 37.6Q13.4 36.7 13.8 35.7Q14.9 32.4 11.5 32.6Q11.1 32.6 10.7 32.6Q7.2 32.8 7.2 29.4Q7.4 21.2 7.2 13.1Q7.2 8.1 12.2 8.4Z"/>
+    <path stroke-width="3.4" d="M14.7 17.9Q24.8 18.1 34.9 18.7"/>
+    <path stroke-width="3.4" d="M14.2 24.2Q20.3 24.4 26.4 24.7"/>
+  </g>
+</svg>

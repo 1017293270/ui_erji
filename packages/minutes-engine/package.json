@@ -1,0 +1,22 @@
+{
+  "name": "@echomind/minutes-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "minutes": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@echomind/shared": "workspace:*",
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "tsx": "^4.23.15"
+  }
+}

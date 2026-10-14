@@ -1,0 +1,149 @@
+/* ------------------------------------------------------------------
+   Hand-drawn illustrations (components/doodle)
+
+   Thick ink outlines, flat white and warm-gray fills, one clay accent.
+   Drawings are small and sit straight on the page or card surface, the
+   way Claude's own illustrations do: no colored blocks behind them.
+   In dark mode the ink turns light and the fills go dark (chalk on a
+   blackboard); hosts switch the palette through the --doodle-* tokens.
+
+   Motion has three layers:
+     1. Draw-on: strokes draw themselves the first time the drawing is
+        seen (DoodleFX sets data-in). Fills fade in after.
+     2. Idle: small loops that only run while the drawing is on screen
+        (data-live).
+     3. Hover: hosts with .dd-host wiggle their .dd-wiggle parts.
+   Reduced motion shows the finished drawing and nothing moves.
+
+   This file is also inlined into the self-hosted login page
+   (apps/desktop/scripts/render-art.mjs), so keep it framework-free.
+------------------------------------------------------------------- */
+.dd {
+  --dd-ink: var(--doodle-ink, #141413);
+  --dd-paper: var(--doodle-paper, #ffffff);
+  --dd-soft: var(--doodle-soft, #ebe8e0);
+  --dd-mid: var(--doodle-mid, #d3cfc4);
+  --dd-accent: var(--doodle-accent, #d97757);
+  --dd-tint: var(--doodle-tint, #f6dcd0);
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.dd .ln {
+  fill: none;
+  stroke: var(--dd-ink);
+  stroke-width: var(--dd-w, 3);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.dd .p-accent { stroke: var(--dd-accent); }
+.dd .p-mid { stroke: var(--dd-mid); }
+.dd .p-faint { stroke: color-mix(in srgb, var(--dd-ink) 34%, transparent); }
+.dd .ln-dash { stroke-dasharray: 2 9; }
+.dd .fl { stroke: none; }
+.dd .f-paper { fill: var(--dd-paper); }
+.dd .f-soft { fill: var(--dd-soft); }
+.dd .f-mid { fill: var(--dd-mid); }
+.dd .f-ink { fill: var(--dd-ink); }
+.dd .f-accent { fill: var(--dd-accent); }
+.dd .f-tint { fill: var(--dd-tint); }
+
+/* Parts that animate rotate or scale around their own box by default. */
+.dd [class*="dd-"] {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+/* Only-in-motion effects rest invisible, so reduced motion stays clean. */
+.dd .dd-ping { opacity: 0; }
+
+@media (prefers-reduced-motion: no-preference) {
+  /* 1. Draw-on. pathLength is 1, so a dash of 1 is the whole stroke. */
+  .js .dd[data-draw] .ln-draw {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    opacity: 0;
+  }
+  .js .dd[data-draw] .ln-dash,
+  .js .dd[data-draw] .fl { opacity: 0; }
+  .js .dd[data-draw][data-in] .ln-draw {
+    animation: dd-draw 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: calc(var(--i, 0) * 120ms);
+  }
+  .js .dd[data-draw][data-in] .ln-dash,
+  .js .dd[data-draw][data-in] .fl {
+    opacity: 1;
+    transition: opacity 0.5s ease-out;
+    transition-delay: calc(var(--i, 0) * 120ms + 380ms);
+  }
+
+  /* 2. Idle loops. They sleep while the drawing is off screen. */
+  .dd:not([data-live]) [class*="dd-"] { animation-play-state: paused; }
+  .dd .dd-float { animation: dd-float var(--dur, 5s) ease-in-out var(--delay, 0s) infinite alternate; }
+  .dd .dd-sway { animation: dd-sway var(--dur, 4s) ease-in-out var(--delay, 0s) infinite alternate; }
+  .dd .dd-drift { animation: dd-drift var(--dur, 9s) ease-in-out var(--delay, 0s) infinite alternate; }
+  .dd .dd-pulse { animation: dd-pulse var(--dur, 2.4s) ease-in-out var(--delay, 0s) infinite; }
+  .dd .dd-flow { animation: dd-flow 1.4s linear infinite; }
+  .dd .dd-ping { animation: dd-ping var(--dur, 2.6s) ease-out var(--delay, 0s) infinite backwards; }
+  /* Two hands passing a slip: each leans in along its own arm. */
+  .dd .dd-reach { animation: dd-reach var(--dur, 3.4s) cubic-bezier(0.45, 0, 0.3, 1) var(--delay, 0s) infinite; }
+  /* Checks tick themselves one after another, hold, then reset. */
+  .dd .dd-tick {
+    stroke-dasharray: 1;
+    animation: dd-tick var(--dur, 6s) ease-out var(--delay, 0s) infinite both;
+  }
+
+  /* 3. Hover. */
+  .dd-host:hover .dd-wiggle { animation: dd-wiggle 0.7s ease-in-out; }
+}
+
+@keyframes dd-draw {
+  0% { stroke-dashoffset: 1; opacity: 0; }
+  1% { opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 1; }
+}
+@keyframes dd-float {
+  from { transform: translateY(calc(var(--amp, 3px) * -1)); }
+  to { transform: translateY(var(--amp, 3px)); }
+}
+@keyframes dd-sway {
+  from { transform: rotate(calc(var(--amp, 2.5deg) * -1)); }
+  to { transform: rotate(var(--amp, 2.5deg)); }
+}
+@keyframes dd-drift {
+  from { transform: translateX(calc(var(--amp, 10px) * -1)); }
+  to { transform: translateX(var(--amp, 10px)); }
+}
+@keyframes dd-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(var(--to, 1.12)); opacity: var(--op, 0.55); }
+}
+@keyframes dd-flow { to { stroke-dashoffset: -22; } }
+@keyframes dd-ping {
+  0% { opacity: 0.8; transform: scale(0.5); }
+  70%, 100% { opacity: 0; transform: scale(2); }
+}
+@keyframes dd-reach {
+  0%, 100% { transform: translate(0, 0); }
+  45%, 55% { transform: translate(var(--dx, 0px), var(--dy, 6px)); }
+}
+@keyframes dd-tick {
+  0% { stroke-dashoffset: 1; opacity: 1; }
+  14% { stroke-dashoffset: 0; }
+  86% { stroke-dashoffset: 0; opacity: 1; }
+  96%, 100% { stroke-dashoffset: 0; opacity: 0; }
+}
+@keyframes dd-wiggle {
+  0%, 100% { transform: rotate(0); }
+  25% { transform: rotate(-6deg); }
+  60% { transform: rotate(5deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dd * { animation: none !important; transition: none !important; }
+}
+@media (forced-colors: active) {
+  .dd .ln { stroke: CanvasText; }
+  .dd .fl { fill: Canvas; }
+}
