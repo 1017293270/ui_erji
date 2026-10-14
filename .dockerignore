@@ -1,0 +1,12 @@
+# The server image is built with the repo root as context; keep it to sources.
+.git
+**/node_modules
+**/dist
+**/target
+**/.build
+**/.swiftpm
+apps/desktop/src-tauri/binaries
+generated
+recordings
+**/.env
+**/.env.*

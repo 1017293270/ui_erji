@@ -1,4 +1,5 @@
-# EchoMind on echomind-server. Lives at /srv/echomind/compose.yaml; deploy.sh copies it there.
+# EchoMind on echomind-server. update.sh copies it to /srv/echomind/compose.yaml; the code it
+# builds is the git checkout in /srv/echomind/src.
 # Secrets come from /srv/echomind/.env (0600), which setup.sh creates and nothing ever prints.
 name: echomind
 
@@ -20,7 +21,11 @@ services:
       retries: 6
 
   api:
-    build: ./app
+    build:
+      context: ./src
+      dockerfile: apps/server/Dockerfile
+      args:
+        ECHOMIND_VERSION: ${ECHOMIND_VERSION:-unknown}
     image: echomind-server:latest
     restart: unless-stopped
     env_file: .env
