@@ -68,6 +68,8 @@ function world() {
         return ok({ calendars: [{ calendar: { calendar_id: "cal" } }] });
       case "/open-apis/calendar/v4/calendars/cal/events/instance_view":
         return ok({ items: [] });
+      case "/open-apis/task/v2/tasks":
+        return ok({ task: { guid: "task-1", url: "https://applink.feishu.cn/client/todo/detail?guid=task-1" } });
     }
     return [404, { code: 404, msg: req.path }];
   };
@@ -206,6 +208,24 @@ describe.skipIf(!hasDb)("api", () => {
     expect(res.status).toBe(401);
     expect((await json(res)).error.code).toBe("feishu_signed_out");
     expect(await (await call("/v1/me", { token: body.token })).json()).toMatchObject({ feishuSignedIn: false });
+  });
+
+  it("creates a Feishu task as the caller, taking null for a missing due date or description", async () => {
+    const { body } = await signIn();
+    const create = (json: unknown) => call("/v1/feishu/tasks", { method: "POST", token: body.token, json });
+    // Exactly what the desktop sends for a todo without a due date.
+    const res = await create({ title: "整理报价单", description: null, due: null, assigneeId: "ou_li" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ guid: "task-1", url: "https://applink.feishu.cn/client/todo/detail?guid=task-1" });
+    const sent = w.requests.find((r) => r.path === "/open-apis/task/v2/tasks")!;
+    expect(sent.authorization).toBe("Bearer u-1");
+    expect(sent.body).not.toHaveProperty("due");
+    expect(sent.body).not.toHaveProperty("description");
+    expect(sent.body).toMatchObject({ summary: "整理报价单", members: [{ id: "ou_li", type: "user", role: "assignee" }] });
+
+    const outside = await create({ title: "跟进", description: null, due: "2026-10-20", assigneeId: "ext-1" });
+    expect(outside.status).toBe(400);
+    expect((await json(outside)).error.message).toContain("通讯录");
   });
 
   it("keeps grants alive in the background", async () => {

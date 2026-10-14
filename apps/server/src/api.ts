@@ -46,10 +46,11 @@ const SignIn = z.strictObject({
   device: z.string().max(120).optional(),
 });
 
+// The desktop sends a missing description or due date as null (a Rust Option), so null means "none".
 const NewTask = z.strictObject({
   title: z.string().max(10_000),
-  description: z.string().max(20_000).optional(),
-  due: z.string().max(20).optional(),
+  description: z.string().max(20_000).nullish(),
+  due: z.string().max(20).nullish(),
   assigneeId: z.string().max(100),
 });
 
