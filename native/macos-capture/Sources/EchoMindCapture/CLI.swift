@@ -55,7 +55,7 @@ enum CLI {
               stdout: JSON Lines 事件；stdin 指令: pause | resume | mark | stop
           echomind-capture devices
           echomind-capture meetings [--verbose]
-          echomind-capture permissions [--request-mic]
+          echomind-capture permissions [--request-mic | --request-system-audio]
           echomind-capture selftest --out <dir>
 
         """
@@ -79,9 +79,11 @@ enum CLI {
                 try args.finish()
                 StdoutSink.shared.emit(Meetings.json(verbose: verbose))
             case "permissions":
-                let request = args.flag("--request-mic")
+                let requestMic = args.flag("--request-mic")
+                let requestSystemAudio = args.flag("--request-system-audio")
                 try args.finish()
-                if request { PermissionsCommand.requestMicrophone() }
+                if requestMic { PermissionsCommand.requestMicrophone() }
+                if requestSystemAudio { PermissionsCommand.requestSystemAudio() }
                 StdoutSink.shared.emit(PermissionsCommand.json())
             case "selftest":
                 guard let out = try args.value("--out") else { throw ArgumentError(message: "缺少 --out <dir>") }

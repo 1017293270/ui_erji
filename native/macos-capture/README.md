@@ -121,10 +121,14 @@ stdin 控制（一行一个指令，不区分大小写）：`pause`、`resume`�
 ### `permissions`
 
 ```json
-{"microphone":"granted","systemAudio":"unknown","note":"……"}
+{"microphone":"granted","systemAudio":"undetermined","note":"……"}
 ```
 
-`microphone` 取值 `granted|denied|undetermined|restricted`（AVCaptureDevice）。“系统录音”权限（kTCCServiceAudioCapture）没有公开的查询 API，所以 `systemAudio` 固定为 `unknown`。`permissions --request-mic` 会弹出麦克风授权框，等用户选择后输出同样的 JSON。
+- `microphone` 取值 `granted|denied|undetermined|restricted`（AVCaptureDevice）。
+- `systemAudio` 取值 `granted|denied|undetermined|unknown`。“系统录音”权限（kTCCServiceAudioCapture）没有公开 API，这里用的是 TCC 的私有函数 `TCCAccessPreflight` / `TCCAccessRequest`（运行时用 dlopen 查找，见 `SystemAudioPermission.swift`）。将来的 macOS 去掉了这两个函数时，值为 `unknown`，程序不会崩溃。
+- `permissions --request-mic` 弹出麦克风授权框，`permissions --request-system-audio` 弹出系统录音授权框，等用户选择后输出同样的 JSON。已经回答过的权限不会再弹框，立刻输出当前状态。
+
+桌面端在每次开始录音前先查一遍：没问过的先弹框；麦克风被拒绝就不开始录，并提示去系统设置打开；系统录音被拒绝照常录（线下会议用不到它），但提示线上其他人的声音录不到。
 
 ### `selftest`
 
@@ -164,6 +168,7 @@ macOS 会弹出两个授权框：
 TCC 把权限记在“负责进程”名下：
 
 - 在终端里测试时，弹框和设置项里显示的是 **终端 App**（Terminal / iTerm 等）。iTerm 有时不会弹框，需要先去设置里手动打开，系统自带的“终端”一定会弹。
+- `pnpm tauri dev` 启动的开发版也一样：权限记在启动它的终端名下。比如在 Claude 桌面版的终端面板里运行时，用的是 Claude 的麦克风和系统录音权限，不会以 EchoMind 的名义弹框。要测试 EchoMind 自己的授权流程，用打包好的 App。
 - 作为 sidecar 运行时，权限归 **EchoMind.app**。所以 Tauri App 自己的 Info.plist 也必须包含 `NSMicrophoneUsageDescription` 和 `NSAudioCaptureUsageDescription`。如果 App 开启了 hardened runtime，还需要 `com.apple.security.device.audio-input` entitlement。
 
 二进制里嵌入的 Info.plist（`CFBundleIdentifier` 为 `com.evanbyte.echomind.capture`，带上述两条中文说明）在本程序自己是负责进程时生效，可以用 `launchctl plist __TEXT,__info_plist <binary>` 查看。
@@ -205,7 +210,8 @@ afplay /tmp/echomind-test/system-0001.wav    # 应该是视频或会议里对方
 - system 轨的时间是进程把音频交给系统的时刻，不包含输出设备的延迟。用蓝牙耳机时，用户实际听到的时间大约还要晚 100–250 ms。mic 轨已经扣除了输入延迟。
 - 时钟漂移靠超过 20 ms 时的重新对齐来纠正，每次会产生几十毫秒的插入静音或丢弃，对 ASR 基本没有影响。设备切换期间（约 0.3–1 秒）对应的轨是静音。
 - 用 AirPods 等蓝牙耳机做麦克风时，系统会切到 HFP，音质变差、采样率变低。这是 macOS 的行为，程序会自动适配新的采样率。
-- 无法检测“系统录音”权限的状态，被拒绝时 system 轨只是静音。
+- “系统录音”权限的状态靠私有 API 查询，没有官方保证。查不到时（`unknown`）被拒绝的 system 轨只是静音。
+- 用 ad-hoc 签名重新打包后，macOS 可能认为是另一个 App：设置里的开关看起来开着，实际不生效。这时把开关关掉再打开一次。
 - 需要 macOS 14.2 以上。x86_64 版本只在 Rosetta 下跑过 selftest。
 - WAV 文件头每秒刷新一次，进程被强杀时最多丢失最后约 1 秒。
 

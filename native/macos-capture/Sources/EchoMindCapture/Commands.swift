@@ -21,16 +21,16 @@ enum DevicesCommand {
     }
 }
 
-/// `permissions [--request-mic]`.
+/// `permissions [--request-mic | --request-system-audio]`.
 enum PermissionsCommand {
-    static let systemAudioNote =
-        "macOS 没有查询“系统录音”(kTCCServiceAudioCapture) 授权状态的公开 API，所以 systemAudio 固定为 unknown。首次开始录制系统声音时系统会弹窗；若被拒绝，tap 只会收到静音，需要到“系统设置 → 隐私与安全性 → 屏幕与系统录音 → 仅系统录音”中开启。权限归属于启动本程序的 App（作为 sidecar 时是 EchoMind，命令行测试时是终端）。"
+    static let note =
+        "麦克风在“系统设置 → 隐私与安全性 → 麦克风”中管理，系统录音在“系统设置 → 隐私与安全性 → 屏幕与系统录音 → 仅系统录音”中管理。被拒绝过的权限不会再弹窗，只能到设置里打开。权限归属于启动本程序的 App（作为 sidecar 时是 EchoMind，命令行测试时是终端）。系统录音的状态靠 macOS 的私有接口查询，查不到时为 unknown。"
 
     static func json() -> JSON {
         [
             "microphone": .string(micStatus()),
-            "systemAudio": "unknown",
-            "note": .string(systemAudioNote),
+            "systemAudio": .string(SystemAudioPermission.status()),
+            "note": .string(note),
         ]
     }
 
@@ -44,12 +44,26 @@ enum PermissionsCommand {
         }
     }
 
+    /// How long a prompt may stay unanswered (or never appear) before the status is printed anyway,
+    /// so the app waiting on it can go on recording.
+    static let promptTimeout: DispatchTimeInterval = .seconds(90)
+
     /// Shows the microphone prompt (if undetermined), then prints the resulting status.
     static func requestMicrophone() -> Never {
-        AVCaptureDevice.requestAccess(for: .audio) { _ in
-            StdoutSink.shared.emit(json())
-            exit(0)
-        }
+        AVCaptureDevice.requestAccess(for: .audio) { _ in finish() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + promptTimeout) { finish() }
         dispatchMain()
+    }
+
+    /// Shows the system audio recording prompt (if undetermined), then prints the resulting status.
+    static func requestSystemAudio() -> Never {
+        guard SystemAudioPermission.request({ _ in finish() }) else { finish() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + promptTimeout) { finish() }
+        dispatchMain()
+    }
+
+    private static func finish() -> Never {
+        StdoutSink.shared.emit(json())
+        exit(0)
     }
 }
