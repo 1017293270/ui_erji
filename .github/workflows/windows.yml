@@ -1,0 +1,103 @@
+# The Windows installer: builds both sidecars and the app on a Windows machine, runs what can
+# run without a person (tests, the capture selftest, the pinned connection to the server),
+# and keeps the NSIS installer as the run's artifact for 14 days.
+#
+# Nothing here deploys anything or holds a secret: the app talks only to the EchoMind server.
+name: Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "apps/desktop/**"
+      - "packages/**"
+      - "native/windows-capture/**"
+      - "native/transcriber/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/windows.yml"
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      BIN: apps/desktop/src-tauri/binaries
+      MODELS: apps/desktop/src-tauri/resources/models
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native/windows-capture
+            native/transcriber
+            apps/desktop/src-tauri
+
+      - name: 录音模块：测试、自测、试运行
+        working-directory: native/windows-capture
+        run: |
+          cargo clippy --release --all-targets -- -D warnings
+          cargo test --release
+          cargo build --release
+          exe=./target/release/echomind-capture.exe
+          $exe selftest --out "$RUNNER_TEMP/selftest"
+          $exe permissions
+          # A hosted runner may have no sound card; these two only must not crash.
+          $exe devices || true
+          $exe meetings || true
+          (sleep 2; echo mark; sleep 1; echo stop) | $exe record --out "$RUNNER_TEMP/dry" --no-mic --no-system --segment-seconds 1
+          cat "$RUNNER_TEMP/dry/manifest.json"
+          mkdir -p "$GITHUB_WORKSPACE/$BIN"
+          cp $exe "$GITHUB_WORKSPACE/$BIN/echomind-capture-x86_64-pc-windows-msvc.exe"
+
+      - name: 转写模块
+        run: bash native/transcriber/build.sh
+
+      - name: 语音模型（缓存）
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MODELS }}
+          key: models-${{ hashFiles('native/transcriber/src/models.rs') }}
+      - name: 语音模型：下载并校验
+        run: |
+          exe="$BIN/echomind-transcribe-x86_64-pc-windows-msvc.exe"
+          $exe download --models-dir "$MODELS"
+          $exe models --models-dir "$MODELS" | node -e 'const s = JSON.parse(require("fs").readFileSync(0, "utf8")); console.log(s); process.exit(s.ready ? 0 : 1)'
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @echomind/desktop build
+
+      - name: 桌面端测试
+        working-directory: apps/desktop/src-tauri
+        run: cargo test
+      - name: 服务器证书校验（只认 EchoMind 自己的根证书）
+        working-directory: apps/desktop/src-tauri
+        # The pilot server may not accept connections from GitHub's machines; that must not block the build.
+        run: cargo test live_server -- --ignored --nocapture || echo "::warning::没能完成服务器证书校验，详见上面的输出"
+
+      - name: 打安装包
+        working-directory: apps/desktop
+        run: pnpm tauri build --config src-tauri/tauri.package-windows.conf.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EchoMind-Windows
+          path: apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+          retention-days: 14
+          if-no-files-found: error

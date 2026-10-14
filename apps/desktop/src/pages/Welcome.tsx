@@ -4,7 +4,8 @@ import { clock } from "@echomind/shared";
 import { cn, EchoMark, InboxTray, LaptopVoice, MicDoodle, Wave } from "@echomind/ui";
 import { FeishuAvatar, useFeishuLogin } from "../components/Feishu";
 import { Button } from "../components/ui";
-import { isTauri, onCaptureEvent, sendCapture, startCapture } from "../lib/native";
+import { isTauri, onCaptureEvent, requestMicrophone, requestSystemAudio, sendCapture, startCapture } from "../lib/native";
+import { isWindows } from "../lib/platform";
 import { navigate } from "../lib/router";
 import { useStore } from "../lib/store";
 import { Meter } from "./Recorder";
@@ -18,6 +19,12 @@ export function Welcome() {
   const next = () => setStep((s) => Math.min(STEPS.length - 1, s + 1));
   const done = (i: number) => i < step || (tested && i === STEPS.length - 1);
   const passed = useCallback(() => setTested(true), []);
+  // macOS asks once per permission, so ask here, before the first recording, one after the other.
+  const grant = async () => {
+    if (!isTauri || isWindows) return;
+    await requestMicrophone().catch(() => undefined);
+    await requestSystemAudio().catch(() => undefined);
+  };
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
@@ -61,15 +68,27 @@ export function Welcome() {
         {step === 1 ? <ConnectFeishu onDone={next} /> : null}
 
         {step === 2 ? (
-          <Step art={null} title="允许 EchoMind 录音" text="需要两项授权：麦克风录你自己，系统录音录会议里的其他人。录音时菜单栏和浮窗会一直提示，不会悄悄录。">
+          <Step
+            art={null}
+            title="允许 EchoMind 录音"
+            text={
+              isWindows
+                ? "麦克风录你自己，系统声音录会议里的其他人。Windows 上只有麦克风需要允许。录音时任务栏和浮窗会一直提示，不会悄悄录。"
+                : "需要两项授权：麦克风录你自己，系统录音录会议里的其他人。录音时菜单栏和浮窗会一直提示，不会悄悄录。"
+            }
+          >
             <div className="grid w-full grid-cols-2 gap-3">
               <Grant art={<MicDoodle className="w-[56px]" />} title="麦克风" text="你的发言" />
-              <Grant art={<LaptopVoice className="w-[64px]" />} title="系统录音" text="其他参会人的声音" />
+              <Grant art={<LaptopVoice className="w-[64px]" />} title={isWindows ? "系统声音" : "系统录音"} text="其他参会人的声音" />
             </div>
-            <Button variant="primary" size="lg" className="w-full" onClick={next}>
-              {isTauri ? "授权并继续" : "继续"}
+            <Button variant="primary" size="lg" className="w-full" onClick={() => void grant().finally(next)}>
+              {isTauri && !isWindows ? "授权并继续" : "继续"}
             </Button>
-            <p className="text-[12px] leading-relaxed text-subtle">macOS 会弹出系统对话框，请选择「允许」。Windows 不需要单独授权系统录音。</p>
+            <p className="text-[12px] leading-relaxed text-subtle">
+              {isWindows
+                ? "Windows 不会弹窗询问。如果录音时提示麦克风被关闭，到「设置 → 隐私和安全性 → 麦克风」里打开「让桌面应用访问麦克风」。"
+                : "macOS 会弹出系统对话框，请选择「允许」。"}
+            </p>
           </Step>
         ) : null}
 

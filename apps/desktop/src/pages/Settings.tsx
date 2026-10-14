@@ -4,8 +4,20 @@ import { applyTheme, cn, readTheme, Toolbox, type ThemeChoice } from "@echomind/
 import { FeishuAvatar, useFeishuLogin } from "../components/Feishu";
 import { PageHeader } from "../components/Shell";
 import { Badge, Button, Segmented, Toggle } from "../components/ui";
-import { isTauri, llmStatus, permissions, requestMicrophone, revealRecordings, type LlmStatus, type PermissionState } from "../lib/native";
+import {
+  isTauri,
+  llmStatus,
+  openPrivacySettings,
+  permissions,
+  requestMicrophone,
+  requestSystemAudio,
+  revealRecordings,
+  type LlmStatus,
+  type PermissionState,
+  type PrivacySettings,
+} from "../lib/native";
 import { formatBytes } from "../lib/process";
+import { isWindows } from "../lib/platform";
 import { navigate } from "../lib/router";
 import { LIVE, useStore } from "../lib/store";
 import { Bar } from "./MeetingDetail";
@@ -21,8 +33,9 @@ export function Settings() {
 
   const [llm, setLlm] = useState<LlmStatus | null>(null);
 
+  const refreshPerm = () => void permissions().then(setPerm).catch(() => setPerm(null));
   useEffect(() => {
-    void permissions().then(setPerm).catch(() => setPerm(null));
+    refreshPerm();
     void llmStatus().then(setLlm).catch(() => setLlm(null));
   }, []);
 
@@ -78,20 +91,30 @@ export function Settings() {
       </Group>
 
       <Group title="系统权限">
-        <Row label="麦克风" hint="录下你自己的发言。">
-          <PermissionBadge state={perm?.microphone ?? "unknown"} />
-          {perm?.microphone === "undetermined" ? (
-            <Button size="sm" onClick={() => void requestMicrophone().then(() => permissions().then(setPerm))}>
-              授权
-            </Button>
-          ) : null}
-        </Row>
         <Row
-          label="系统录音"
-          hint="录下会议里其他人的声音。第一次录音时 macOS 会询问；如果拒绝过，到「系统设置 → 隐私与安全性 → 屏幕与系统录音」里打开 EchoMind 的「仅系统录音」。Windows 不需要单独授权。"
+          label="麦克风"
+          hint={
+            isWindows
+              ? "录下你自己的发言。在 Windows 的「设置 → 隐私和安全性 → 麦克风」里管理。"
+              : "录下你自己的发言。拒绝过的话 macOS 不会再问，要到「系统设置 → 隐私与安全性 → 麦克风」里打开。"
+          }
         >
-          <PermissionBadge state={perm?.systemAudio ?? "unknown"} />
+          <PermissionBadge state={perm?.microphone ?? "unknown"} />
+          <PermissionAction kind="microphone" state={perm?.microphone} onAnswered={refreshPerm} />
         </Row>
+        {isWindows ? (
+          <Row label="系统声音" hint="录下会议里其他人的声音。Windows 上不需要授权。">
+            <Badge tone="success" dot>无需授权</Badge>
+          </Row>
+        ) : (
+          <Row
+            label="系统录音"
+            hint="录下会议里其他人的声音。拒绝过的话 macOS 不会再问，要到「系统设置 → 隐私与安全性 → 屏幕与系统录音」里打开 EchoMind 的「仅系统录音」。"
+          >
+            <PermissionBadge state={perm?.systemAudio ?? "unknown"} />
+            <PermissionAction kind="systemAudio" state={perm?.systemAudio} onAnswered={refreshPerm} />
+          </Row>
+        )}
         <Row label="首次使用向导" hint="重新走一遍：连接飞书、授权、试录 10 秒。">
           <Button size="sm" onClick={() => navigate("/welcome")}>
             打开向导
@@ -323,6 +346,26 @@ function Row({ label, hint, children }: { label: string; hint?: ReactNode; child
       <div className="flex shrink-0 items-center gap-2">{children}</div>
     </div>
   );
+}
+
+/** Asks when the question is still open; points to the settings page once it was refused. */
+function PermissionAction({ kind, state, onAnswered }: { kind: PrivacySettings; state?: PermissionState; onAnswered: () => void }) {
+  if (state === "undetermined") {
+    const request = kind === "microphone" ? requestMicrophone : requestSystemAudio;
+    return (
+      <Button size="sm" onClick={() => void request().finally(onAnswered)}>
+        授权
+      </Button>
+    );
+  }
+  if (state === "denied" || state === "restricted") {
+    return (
+      <Button size="sm" onClick={() => void openPrivacySettings(kind)}>
+        {isWindows ? "打开设置" : "打开系统设置"}
+      </Button>
+    );
+  }
+  return null;
 }
 
 function PermissionBadge({ state }: { state: PermissionState }) {

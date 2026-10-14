@@ -19,7 +19,8 @@ import { clock } from "@echomind/shared";
 import { applyTheme, cn, EchoMark, MicDoodle } from "@echomind/ui";
 import { href, navigate, useLocation, type Route } from "../lib/router";
 import { useStore } from "../lib/store";
-import { sendCapture, startCapture } from "../lib/native";
+import { openPrivacySettings, sendCapture, startCapture } from "../lib/native";
+import { isMac, isWindows } from "../lib/platform";
 import { Avatar, Button, IconButton, Kbd, sourceLabel } from "./ui";
 import { FeishuAvatar } from "./Feishu";
 
@@ -76,7 +77,7 @@ function Sidebar() {
 
   return (
     <aside className="flex w-[232px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
-      <div data-tauri-drag-region="deep" className="drag h-[38px] shrink-0 [.platform-mac_&]:h-[46px]" />
+      <div data-tauri-drag-region="deep" className="drag h-[38px] shrink-0 [.platform-mac_&]:h-[46px] [.platform-win_&]:h-4" />
       <a href={href("/")} className="no-drag mx-4 mb-5 flex items-center gap-2.5">
         <EchoMark className="w-[30px]" />
         <span className="leading-tight">
@@ -175,7 +176,7 @@ function TopBar({ crumbs }: { crumbs: string[] }) {
       <button className="no-drag hidden h-8 w-[240px] items-center gap-2 rounded-[9px] border border-border bg-card px-2.5 text-[13px] text-subtle hover:border-input lg:flex">
         <Search className="size-3.5" aria-hidden />
         <span className="flex-1 text-left">搜索会议、待办、人</span>
-        <Kbd>⌘</Kbd>
+        <Kbd>{isMac ? "⌘" : "Ctrl"}</Kbd>
         <Kbd>K</Kbd>
       </button>
       <IconButton label={dark ? "浅色模式" : "深色模式"} onClick={toggleTheme}>
@@ -231,7 +232,7 @@ function Toasts() {
   const { toasts, dispatch } = useStore();
   useEffect(() => {
     if (!toasts.length) return;
-    const timers = toasts.map((t) => setTimeout(() => dispatch({ type: "dismissToast", id: t.id }), 4200));
+    const timers = toasts.filter((t) => !t.settings).map((t) => setTimeout(() => dispatch({ type: "dismissToast", id: t.id }), 4200));
     return () => timers.forEach(clearTimeout);
   }, [toasts, dispatch]);
 
@@ -251,7 +252,14 @@ function Toasts() {
               t.tone === "success" ? "bg-success" : t.tone === "error" ? "bg-destructive" : "bg-clay",
             )}
           />
-          <p className="flex-1 leading-relaxed">{t.text}</p>
+          <div className="flex-1">
+            <p className="leading-relaxed">{t.text}</p>
+            {t.settings ? (
+              <Button size="sm" className="mt-2" onClick={() => void openPrivacySettings(t.settings!)}>
+                {isWindows ? "打开设置" : "打开系统设置"}
+              </Button>
+            ) : null}
+          </div>
           <button className="text-subtle hover:text-foreground" aria-label="关闭" onClick={() => dispatch({ type: "dismissToast", id: t.id })}>
             <X className="size-3.5" />
           </button>

@@ -57,6 +57,14 @@
     "macOS": {
       "minimumSystemVersion": "14.2",
       "entitlements": "Entitlements.plist"
+    },
+    "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper" },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese"],
+        "displayLanguageSelector": false
+      }
     }
   }
 }

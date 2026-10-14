@@ -309,7 +309,7 @@ fn page(title: &str, text: &str) -> String {
 @media (prefers-color-scheme:dark){{:root{{--bg:#262624;--fg:#f0eee6;--muted:#a6a39a}}}}
 body{{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--fg);font:15px/1.65 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}}
 main{{text-align:center;padding:24px 16px 12vh}}
-h1{{font:400 30px/1.3 ui-serif,"New York","Songti SC",serif;margin:20px 0 6px;letter-spacing:-.01em}}
+h1{{font:400 30px/1.3 ui-serif,"New York",Georgia,"Songti SC","Microsoft YaHei",serif;margin:20px 0 6px;letter-spacing:-.01em}}
 p{{color:var(--muted);margin:0}}
 </style></head><body><main>{MARK}<h1>{title}</h1><p>{text}</p></main></body></html>"#
     )

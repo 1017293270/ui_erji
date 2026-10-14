@@ -20,7 +20,8 @@ Errors are returned as a Chinese sentence that says what to do (`Result<_, Strin
 ## Files
 
 Everything lives under the app data directory
-(`~/Library/Application Support/com.evanbyte.echomind/` on macOS):
+(`~/Library/Application Support/com.evanbyte.echomind/` on macOS,
+`%APPDATA%\com.evanbyte.echomind\` on Windows):
 
 ```
 recordings/<meetingId>/        one folder per meeting; <meetingId> is the folder name, e.g. rec-1791884868281
@@ -39,8 +40,20 @@ A meeting's id is its recording folder name. Ids must match `^[A-Za-z0-9._-]{1,8
 ## Capture (exists)
 
 `capture_start`, `capture_command(command)`, `capture_meetings`, `capture_permissions`,
-`capture_request_mic`, `reveal_recordings`, `show_main_window`; events on `capture://event`
-(see `native.ts`). The `started` event carries `out`, the recording folder.
+`capture_request_mic`, `capture_request_system_audio`, `open_privacy_settings(kind)`,
+`reveal_recordings`, `show_main_window`; events on `capture://event` (see `native.ts`). The
+`started` event carries `out`, the recording folder.
+
+`capture_start` checks the permissions first: it shows the prompts nobody has answered yet,
+refuses to start without the microphone, and starts without system audio but warns. Every
+failure is also sent as an `error` event, so a button that calls it needs no error handling of
+its own. An `error` event may carry `settings` (`microphone` | `systemAudio`); the toast then
+offers to open that page through `open_privacy_settings`.
+
+The sidecar is `native/macos-capture` (Swift) on macOS and `native/windows-capture` (Rust, WASAPI)
+on Windows, with the same protocol. On Windows `capture_permissions` never says `undetermined`
+(desktop apps get no prompt there), `systemAudio` is always `granted`, and `capture_request_mic`
+opens the microphone privacy settings when access is off.
 
 ## Meetings (storage)
 

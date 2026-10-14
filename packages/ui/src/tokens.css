@@ -52,7 +52,7 @@
   --sp-5: #84587a;
   --sp-6: #4d7c80;
 
-  --font-serif: ui-serif, "New York", Georgia, "Songti SC", "Noto Serif SC", "Source Han Serif SC", "STSong", serif;
+  --font-serif: ui-serif, "New York", Georgia, "Songti SC", "Noto Serif SC", "Source Han Serif SC", "STSong", "Microsoft YaHei UI", serif;
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 }

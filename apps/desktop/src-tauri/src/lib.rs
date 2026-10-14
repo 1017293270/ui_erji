@@ -22,14 +22,22 @@ use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 
 /// Opens a URL or folder with the system's default handler (browser, Finder, Explorer).
 pub(crate) fn open_external(target: impl AsRef<OsStr>) -> std::io::Result<()> {
-    let program = if cfg!(target_os = "macos") {
-        "open"
+    let target = target.as_ref();
+    let mut command = if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
     } else if cfg!(target_os = "windows") {
-        "explorer"
+        // Explorer opens folders; URLs go to the default browser through the URL handler, which
+        // takes them verbatim (no shell between, so `&` in a query string is safe).
+        let url = target.to_str().is_some_and(|t| t.starts_with("https://") || t.starts_with("http://"));
+        let mut command = std::process::Command::new(if url { "rundll32.exe" } else { "explorer.exe" });
+        if url {
+            command.arg("url.dll,FileProtocolHandler");
+        }
+        command
     } else {
-        "xdg-open"
+        std::process::Command::new("xdg-open")
     };
-    std::process::Command::new(program).arg(target).spawn().map(drop)
+    command.arg(target).spawn().map(drop)
 }
 
 /// An error with its causes: reqwest alone says little more than "error sending request".
@@ -59,6 +67,8 @@ fn show_main_window(app: AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // First, so a second launch hands over to this one before anything else starts.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
         .plugin(tauri_plugin_shell::init())
         .manage(capture::Capture::default())
         .manage(feishu::Feishu::default())
@@ -70,6 +80,8 @@ pub fn run() {
             capture::capture_meetings,
             capture::capture_permissions,
             capture::capture_request_mic,
+            capture::capture_request_system_audio,
+            capture::open_privacy_settings,
             capture::reveal_recordings,
             feishu::feishu_status,
             feishu::feishu_login,

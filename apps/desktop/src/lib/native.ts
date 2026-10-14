@@ -29,7 +29,7 @@ export type CaptureEvent =
   | { type: "paused"; atMs: number }
   | { type: "resumed"; atMs: number }
   | { type: "device-changed"; track: "mic" | "system"; device: string }
-  | { type: "error"; code: string; message: string }
+  | { type: "error"; code: string; message: string; settings?: PrivacySettings | null }
   | { type: "stopped"; durationMs: number; segments: number };
 
 export type CaptureCommand = "pause" | "resume" | "mark" | "stop";
@@ -43,6 +43,9 @@ export type DetectedMeeting = {
 };
 
 export type PermissionState = "granted" | "denied" | "undetermined" | "restricted" | "unknown";
+
+/** A permission whose system settings page the app can open. */
+export type PrivacySettings = "microphone" | "systemAudio";
 
 export async function startCapture(): Promise<void> {
   if (isTauri) {
@@ -92,6 +95,14 @@ export async function permissions(): Promise<{ microphone: PermissionState; syst
 
 export async function requestMicrophone(): Promise<void> {
   if (isTauri) await invoke("capture_request_mic");
+}
+
+export async function requestSystemAudio(): Promise<void> {
+  if (isTauri) await invoke("capture_request_system_audio");
+}
+
+export async function openPrivacySettings(kind: PrivacySettings): Promise<void> {
+  if (isTauri) await invoke("open_privacy_settings", { kind });
 }
 
 /* ------------------------------------------------------------------ */

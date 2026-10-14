@@ -1,0 +1,44 @@
+[package]
+name = "echomind-windows-capture"
+version = "0.1.0"
+description = "EchoMind Windows 音频采集：麦克风和系统声音两条对齐的音轨"
+authors = ["evanbyte"]
+edition = "2021"
+rust-version = "1.88"
+publish = false
+
+[[bin]]
+name = "echomind-capture"
+path = "src/main.rs"
+
+[dependencies]
+# preserve_order: event fields come out in the order they are written, like the Swift version.
+serde_json = { version = "1", features = ["preserve_order"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+rubato = "=5.0.1"
+ctrlc = { version = "3.5.2", features = ["termination"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_Media_Audio",
+  "Win32_Media_KernelStreaming",
+  "Win32_Media_Multimedia",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
+  "Win32_System_Threading",
+  "Win32_System_Performance",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Registry",
+  "Win32_UI_Shell_PropertiesSystem",
+  "Win32_Devices_FunctionDiscovery",
+  "Win32_Devices_Properties",
+] }
+windows-core = "0.62"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3

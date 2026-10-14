@@ -1,4 +1,5 @@
-//! The bridge to `echomind-capture`, the macOS capture sidecar.
+//! The bridge to `echomind-capture`, the capture sidecar: Swift on macOS (native/macos-capture),
+//! Rust on Windows (native/windows-capture). Both speak the same protocol.
 //!
 //! `record` runs for the whole meeting: it prints one JSON event per line, which
 //! goes to every window as `capture://event`, and reads `pause | resume | mark |
@@ -30,10 +31,10 @@ pub struct Capture {
 }
 
 fn supported() -> Result<(), String> {
-    if cfg!(target_os = "macos") {
+    if cfg!(any(target_os = "macos", target_os = "windows")) {
         Ok(())
     } else {
-        Err("Windows 版的录音模块还在开发中，目前只能在 macOS 上录音。".into())
+        Err("这个系统上还不能录音，目前只支持 macOS 和 Windows。".into())
     }
 }
 
@@ -41,13 +42,44 @@ pub fn is_recording(app: &AppHandle) -> bool {
     app.state::<Capture>().child.lock().unwrap().is_some()
 }
 
-/// Starts `record` into a new folder under the app's data directory.
-pub fn start(app: &AppHandle) -> Result<(), String> {
+/// Why a recording did not start, or what it will miss: shown as an `error` event. `settings`
+/// names the permission whose settings page the toast offers to open.
+struct Problem {
+    code: &'static str,
+    message: String,
+    settings: Option<&'static str>,
+}
+
+impl From<String> for Problem {
+    fn from(message: String) -> Self {
+        Self { code: "app", message, settings: None }
+    }
+}
+
+fn show_problem(app: &AppHandle, problem: &Problem) {
+    let _ = app.emit(EVENT, json!({ "type": "error", "code": problem.code, "message": problem.message, "settings": problem.settings }));
+}
+
+/// Starts `record` into a new folder under the app's data directory. A failure is also shown in
+/// the windows, so callers need not report it.
+pub async fn start(app: &AppHandle) -> Result<(), String> {
+    begin(app).await.map_err(|problem| {
+        show_problem(app, &problem);
+        problem.message
+    })
+}
+
+async fn begin(app: &AppHandle) -> Result<(), Problem> {
     supported()?;
+    if is_recording(app) {
+        return Err(Problem::from("已经在记录了".to_string()));
+    }
+    let warning = check_permissions(app).await?;
+
     let state = app.state::<Capture>();
     let mut slot = state.child.lock().unwrap();
     if slot.is_some() {
-        return Err("已经在记录了".into());
+        return Err(Problem::from("已经在记录了".to_string()));
     }
 
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or_default();
@@ -67,7 +99,46 @@ pub fn start(app: &AppHandle) -> Result<(), String> {
     show_recorder(app);
     tray::set_recording(app, true);
     tauri::async_runtime::spawn(forward(app.clone(), events));
+    if let Some(warning) = warning {
+        // Started from the tray, the main window may be hidden; this needs reading now.
+        crate::show_main(app);
+        show_problem(app, &warning);
+    }
     Ok(())
+}
+
+/// Asks for the permissions nobody has answered yet, so the prompts come before the recording and
+/// not in the middle of it. Without the microphone there is nothing to record, so that refuses;
+/// without system audio only the remote voices go missing, so that is a warning.
+///
+/// macOS never asks twice: once refused, a permission can only be turned on in System Settings.
+/// An app rebuilt with a new ad hoc signature can also find its old switch on but not working.
+async fn check_permissions(app: &AppHandle) -> Result<Option<Problem>, Problem> {
+    // A sidecar that cannot answer fails again when recording starts, which reports it.
+    let Ok(mut status) = query(app, &["permissions"]).await else { return Ok(None) };
+    if status["microphone"] == "undetermined" {
+        if let Ok(answered) = query(app, &["permissions", "--request-mic"]).await {
+            status = answered;
+        }
+    }
+    if status["systemAudio"] == "undetermined" {
+        if let Ok(answered) = query(app, &["permissions", "--request-system-audio"]).await {
+            status = answered;
+        }
+    }
+    if matches!(status["microphone"].as_str(), Some("denied" | "restricted")) {
+        let message = if cfg!(target_os = "windows") {
+            "Windows 关闭了麦克风权限，录不到声音，所以没有开始记录。到「设置 → 隐私和安全性 → 麦克风」打开「麦克风访问权限」和「让桌面应用访问麦克风」，再开始记录。"
+        } else {
+            "EchoMind 没有麦克风权限，录不到声音，所以没有开始记录。到「系统设置 → 隐私与安全性 → 麦克风」打开 EchoMind（已经开着的话，关掉再打开一次），再开始记录。"
+        };
+        return Err(Problem { code: "mic_permission_denied", message: message.into(), settings: Some("microphone") });
+    }
+    Ok((status["systemAudio"] == "denied").then(|| Problem {
+        code: "system_audio_denied",
+        message: "EchoMind 没有「系统录音」权限：这次只录得到你这边的声音，线上会议里其他人的声音录不到。到「系统设置 → 隐私与安全性 → 屏幕与系统录音」打开 EchoMind 的「仅系统录音」（已经开着的话，关掉再打开一次），下次开始记录时生效。".into(),
+        settings: Some("systemAudio"),
+    }))
 }
 
 /// Writes one stdin command to the running recording.
@@ -170,17 +241,19 @@ pub fn stop_then_exit(app: &AppHandle) {
 fn show_recorder(app: &AppHandle) {
     let Some(window) = app.get_webview_window("recorder") else { return };
     if !app.state::<Capture>().placed.swap(true, Ordering::Relaxed) {
-        // Top right of the screen the main window is on, below the menu bar.
+        // Top right of the screen the main window is on, inside the work area: below the macOS
+        // menu bar, and clear of a Windows taskbar docked at the top or right.
         let monitor = app
             .get_webview_window("main")
             .and_then(|main| main.current_monitor().ok().flatten())
             .or_else(|| window.primary_monitor().ok().flatten());
         if let Some(monitor) = monitor {
             let scale = monitor.scale_factor();
-            let origin = monitor.position().to_logical::<f64>(scale);
-            let size = monitor.size().to_logical::<f64>(scale);
+            let area = monitor.work_area();
+            let origin = area.position.to_logical::<f64>(scale);
+            let size = area.size.to_logical::<f64>(scale);
             let width = window.outer_size().map(|s| s.to_logical::<f64>(scale).width).unwrap_or(360.0);
-            let _ = window.set_position(LogicalPosition::new(origin.x + size.width - width - 12.0, origin.y + 36.0));
+            let _ = window.set_position(LogicalPosition::new(origin.x + size.width - width - 12.0, origin.y + 12.0));
         }
     }
     let _ = window.show();
@@ -226,7 +299,7 @@ pub fn reveal(app: &AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn capture_start(app: AppHandle) -> Result<(), String> {
-    start(&app)
+    start(&app).await
 }
 
 #[tauri::command]
@@ -245,10 +318,33 @@ pub async fn capture_permissions(app: AppHandle) -> Result<Value, String> {
     query(&app, &["permissions"]).await
 }
 
-/// Shows the macOS microphone prompt if it has not been answered yet.
+/// Shows the macOS microphone prompt if it has not been answered yet; on Windows, where desktop
+/// apps get no prompt, opens the microphone privacy settings if access is off.
 #[tauri::command]
 pub async fn capture_request_mic(app: AppHandle) -> Result<Value, String> {
     query(&app, &["permissions", "--request-mic"]).await
+}
+
+/// Shows the macOS system audio recording prompt if it has not been answered yet. Windows needs
+/// no permission for it.
+#[tauri::command]
+pub async fn capture_request_system_audio(app: AppHandle) -> Result<Value, String> {
+    if cfg!(target_os = "windows") {
+        return query(&app, &["permissions"]).await;
+    }
+    query(&app, &["permissions", "--request-system-audio"]).await
+}
+
+/// Opens the settings page where a permission is turned on: `microphone` or `systemAudio`.
+#[tauri::command]
+pub async fn open_privacy_settings(kind: String) -> Result<(), String> {
+    let url = match (kind.as_str(), cfg!(target_os = "windows")) {
+        ("microphone", true) => "ms-settings:privacy-microphone",
+        ("microphone", false) => "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+        ("systemAudio", false) => "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+        _ => return Err(format!("没有「{kind}」对应的设置页面。")),
+    };
+    crate::open_external(url).map_err(|e| format!("打不开系统设置：{e}"))
 }
 
 #[tauri::command]

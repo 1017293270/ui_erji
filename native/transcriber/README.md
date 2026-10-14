@@ -52,12 +52,8 @@
 
 **Windows x64**（还没在 Windows 上构建过，以下要实测）：
 
-- 预编译库是 `/MT`（静态 CRT）编译的，Rust 默认是 `/MD`。在 `apps/desktop/src-tauri/.cargo/config.toml` 加上
-  ```toml
-  [target.x86_64-pc-windows-msvc]
-  rustflags = ["-C", "target-feature=+crt-static"]
-  ```
-  不加会出现 LIBCMT / MSVCRT 冲突的链接错误。这也是 Tauri 推荐的做法（顺便省掉 VC++ 运行库）。
+- 预编译库是 `/MT`（静态 CRT）编译的，Rust 默认是 `/MD`。`native/transcriber/.cargo/config.toml` 已经设好 `+crt-static`，不设会出现 LIBCMT / MSVCRT 冲突的链接错误。桌面端（`apps/desktop/src-tauri/.cargo/config.toml`）和录音模块也设了同样的选项，整个 App 不需要另装 VC++ 运行库。
+- 构建和打包在 GitHub Actions 的 Windows 机器上进行，见 `.github/workflows/windows.yml`。
 - 模型目录在 `%APPDATA%\com.evanbyte.echomind\models`，用户名可能是中文。sherpa-onnx 1.13.8 在 Windows 上会把 UTF-8 路径转成宽字符再打开模型文件，理论上没问题，但请用中文用户名实测一次。
 
 ## 命令行

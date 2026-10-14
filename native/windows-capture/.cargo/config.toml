@@ -1,0 +1,4 @@
+# Link the C runtime statically on Windows: nothing to install next to the app, and the
+# prebuilt sherpa-onnx libraries the transcriber links are built with /MT.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

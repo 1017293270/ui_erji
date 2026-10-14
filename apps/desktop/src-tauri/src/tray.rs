@@ -1,9 +1,9 @@
-//! The menu-bar (tray) icon: start or stop a recording without opening the app,
-//! and the elapsed time next to the icon while recording.
+//! The menu-bar icon on macOS, the notification-area icon on Windows: start or stop a recording
+//! without opening the app, and the elapsed time while recording.
 
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Wry};
 
 use crate::{capture, show_main};
@@ -24,9 +24,21 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     )?;
     app.manage(Toggle(toggle));
 
-    TrayIconBuilder::with_id(TRAY)
-        .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
-        .icon_as_template(true)
+    // macOS tints the black template glyph to suit the menu bar; the Windows taskbar shows icons
+    // as drawn, so it gets the app icon, and a left click opens the app as it does elsewhere there.
+    let builder = if cfg!(target_os = "macos") {
+        TrayIconBuilder::with_id(TRAY).icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?).icon_as_template(true)
+    } else {
+        TrayIconBuilder::with_id(TRAY)
+            .icon(Image::from_bytes(include_bytes!("../icons/32x32.png"))?)
+            .show_menu_on_left_click(false)
+            .on_tray_icon_event(|tray, event| {
+                if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                    show_main(tray.app_handle());
+                }
+            })
+    };
+    builder
         .tooltip("EchoMind")
         .menu(&menu)
         .on_menu_event(|app, event| {
@@ -34,10 +46,14 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             match event.id().as_ref() {
                 "toggle" => {
                     tauri::async_runtime::spawn(async move {
-                        let result = if capture::is_recording(&app) { capture::send(&app, "stop") } else { capture::start(&app) };
-                        if let Err(message) = result {
+                        if capture::is_recording(&app) {
+                            if let Err(message) = capture::send(&app, "stop") {
+                                show_main(&app);
+                                capture::report(&app, message);
+                            }
+                        } else if capture::start(&app).await.is_err() {
+                            // start has already shown why, in the main window.
                             show_main(&app);
-                            capture::report(&app, message);
                         }
                     });
                 }

@@ -13,6 +13,7 @@ import {
   type DetectedMeeting,
   type FeishuStatus,
   type ModelsStatus,
+  type PrivacySettings,
 } from "./native";
 import { selfMention } from "@echomind/minutes-engine";
 import { createProcessor, newMeetingTitle, type Job, type Processor } from "./process";
@@ -51,7 +52,8 @@ export type Recording = {
   dir?: string;
 };
 
-export type Toast = { id: number; text: string; tone: "default" | "success" | "error" };
+/** `settings`: the toast offers to open that permission's settings page, and stays until closed. */
+export type Toast = { id: number; text: string; tone: "default" | "success" | "error"; settings?: PrivacySettings };
 
 export type Settings = {
   systemScope: "global" | "process";
@@ -239,7 +241,7 @@ function onCapture(state: State, event: CaptureEvent, keepMeeting: boolean): Sta
     case "device-changed":
       return rec && event.track === "mic" ? { ...state, recording: { ...rec, micDevice: event.device } } : state;
     case "error":
-      return withToast(state, event.message, "error");
+      return withToast(state, event.message, "error", event.settings ?? undefined);
     case "stopped": {
       if (!rec) return state;
       const stopped = { ...state, recording: null, testing: false };
@@ -263,8 +265,8 @@ function onCapture(state: State, event: CaptureEvent, keepMeeting: boolean): Sta
   }
 }
 
-function withToast(state: State, text: string, tone: Toast["tone"] = "default"): State {
-  return { ...state, toasts: [...state.toasts, { id: ++toastId, text, tone }] };
+function withToast(state: State, text: string, tone: Toast["tone"] = "default", settings?: PrivacySettings): State {
+  return { ...state, toasts: [...state.toasts, { id: ++toastId, text, tone, settings }] };
 }
 
 function patchMeeting(state: State, id: string, patch: (m: Meeting) => Meeting): State {
