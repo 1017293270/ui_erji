@@ -37,7 +37,14 @@ impl Default for Transcriber {
     }
 }
 
+/// The models shipped inside the app when it was packaged with them (apps/desktop/scripts/package.sh),
+/// else the folder they are downloaded into. The sidecar still checks every pin before using them.
 fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Ok(bundled) = app.path().resource_dir().map(|dir| dir.join("models")) {
+        if ["asr", "vad", "segmentation", "embedding"].iter().all(|id| bundled.join(id).join(".ready").is_file()) {
+            return Ok(bundled);
+        }
+    }
     Ok(storage::data_dir(app)?.join("models"))
 }
 

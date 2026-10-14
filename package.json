@@ -11,7 +11,8 @@
     "minutes": "pnpm --filter @echomind/minutes-engine minutes",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "desktop:package": "bash apps/desktop/scripts/package.sh"
   },
   "packageManager": "pnpm@11.18.0",
   "devDependencies": {
