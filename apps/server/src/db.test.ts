@@ -3,8 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { beat, migrate, type Sql } from "./db";
+import { Feishu } from "./feishu/client";
 import { checkHealth, createApp } from "./http";
 import { freshDb, hasDb } from "./testing/db";
+
+const stubs = { feishu: new Feishu({ app: null }), dataKey: null, llm: { apiKey: null, baseUrl: "https://llm.test", model: "m" } };
 
 describe.skipIf(!hasDb)("database", () => {
   let db: Awaited<ReturnType<typeof freshDb>>;
@@ -35,7 +38,7 @@ describe.skipIf(!hasDb)("database", () => {
   });
 
   it("serves /healthz with 200 or 503", async () => {
-    const app = createApp({ sql, version: "test" });
+    const app = createApp({ sql, version: "test", ...stubs });
     await beat(sql, "worker");
     const ok = await app.request("/healthz");
     expect(ok.status).toBe(200);
@@ -47,7 +50,7 @@ describe.skipIf(!hasDb)("database", () => {
 
 describe("http", () => {
   it("answers unknown paths with a JSON error", async () => {
-    const app = createApp({ sql: {} as Sql, version: "test" });
+    const app = createApp({ sql: {} as Sql, version: "test", ...stubs });
     const res = await app.request("/nope");
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: { code: "not_found", message: "没有这个接口。" } });
@@ -55,7 +58,7 @@ describe("http", () => {
 
   it("reports the database down instead of throwing", async () => {
     const broken = (() => Promise.reject(new Error("connect ECONNREFUSED"))) as unknown as Sql;
-    const res = await createApp({ sql: broken, version: "test" }).request("/healthz");
+    const res = await createApp({ sql: broken, version: "test", ...stubs }).request("/healthz");
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ ok: false, db: "down" });
   });

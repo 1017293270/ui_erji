@@ -127,7 +127,14 @@ export function Settings() {
         <Group title="转写与纪要">
           <ModelsRow />
           {llm?.configured ? (
-            <Row label="纪要模型" hint="议题、纪要和待办由 DeepSeek 根据文字稿生成。密钥只在应用的原生进程里，页面拿不到。">
+            <Row
+              label="纪要模型"
+              hint={
+                llm.via === "server"
+                  ? "议题、纪要和待办由 DeepSeek 根据文字稿生成，请求经 EchoMind 服务器转发，密钥只在服务器上。"
+                  : "议题、纪要和待办由 DeepSeek 根据文字稿生成。密钥只在应用的原生进程里，页面拿不到。"
+              }
+            >
               <span className="text-[13.5px]">DeepSeek · {llm.model}</span>
             </Row>
           ) : (

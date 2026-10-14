@@ -1,6 +1,8 @@
 //! DeepSeek, proxied. The minutes engine runs in the webview and uses `llm_chat` as its
 //! `fetch`: it sends an OpenAI-style chat/completions body and gets the raw status and text
-//! back, so retries and error handling stay in TypeScript and the key stays here.
+//! back, so retries and error handling stay in TypeScript. The request goes through the
+//! EchoMind server, which adds the key (server.rs); debug builds can still call DeepSeek
+//! directly with the key in .env.local.
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -8,7 +10,9 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::config;
+use tauri::AppHandle;
+
+use crate::{config, server};
 
 const NO_KEY: &str = "还没有配置 DeepSeek：请在 apps/desktop/.env.local 里填写 DEEPSEEK_API_KEY，然后重试。";
 
@@ -24,8 +28,8 @@ fn http() -> &'static reqwest::Client {
 
 #[derive(Serialize, Debug, PartialEq)]
 pub struct Reply {
-    status: u16,
-    body: String,
+    pub(crate) status: u16,
+    pub(crate) body: String,
 }
 
 async fn chat(base_url: &str, api_key: &str, model: &str, mut body: Value) -> Result<Reply, String> {
@@ -55,13 +59,19 @@ fn unreachable_message(base_url: &str, error: &reqwest::Error) -> String {
 }
 
 #[tauri::command]
-pub async fn llm_status() -> Value {
+pub async fn llm_status(app: AppHandle) -> Value {
+    if config::server_url().is_some() {
+        return server::llm_status(&app).await;
+    }
     let config = config::deepseek();
-    json!({ "configured": config.api_key.is_some(), "model": config.model, "baseUrl": config.base_url })
+    json!({ "configured": config.api_key.is_some(), "model": config.model, "baseUrl": config.base_url, "via": "direct" })
 }
 
 #[tauri::command]
-pub async fn llm_chat(body: Value) -> Result<Reply, String> {
+pub async fn llm_chat(app: AppHandle, body: Value) -> Result<Reply, String> {
+    if config::server_url().is_some() {
+        return server::llm_chat(&app, body).await;
+    }
     let config = config::deepseek();
     let api_key = config.api_key.ok_or(NO_KEY)?;
     chat(&config.base_url, &api_key, &config.model, body).await
@@ -109,7 +119,9 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn live_deepseek() {
-        let reply = llm_chat(json!({ "messages": [{ "role": "user", "content": "回答一个字：好" }], "max_tokens": 5 })).await.unwrap();
+        let config = config::deepseek();
+        let body = json!({ "messages": [{ "role": "user", "content": "回答一个字：好" }], "max_tokens": 5 });
+        let reply = chat(&config.base_url, &config.api_key.expect("DEEPSEEK_API_KEY"), &config.model, body).await.unwrap();
         let parsed: Value = serde_json::from_str(&reply.body).unwrap_or_default();
         println!("status {} model {} finish {}", reply.status, parsed["model"], parsed["choices"][0]["finish_reason"]);
         assert_eq!(reply.status, 200);

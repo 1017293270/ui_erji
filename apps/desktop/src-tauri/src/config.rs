@@ -53,6 +53,20 @@ pub fn feishu() -> Option<FeishuApp> {
     Some(FeishuApp { app_id: get("FEISHU_APP_ID")?, app_secret: get("FEISHU_APP_SECRET")? })
 }
 
+/// The EchoMind server, which holds the Feishu App Secret and the DeepSeek key.
+const SERVER_URL: &str = "https://58.87.77.127:8443";
+
+/// Where the server is: ECHOMIND_SERVER_URL (a local one, say), else the pilot server.
+/// Debug builds can set it to `direct` to call Feishu and DeepSeek with the keys in .env.local
+/// instead; that path goes away once the server has been accepted.
+pub fn server_url() -> Option<String> {
+    let url = get("ECHOMIND_SERVER_URL").unwrap_or_else(|| SERVER_URL.into());
+    if cfg!(debug_assertions) && url == "direct" {
+        return None;
+    }
+    Some(url.trim_end_matches('/').to_string())
+}
+
 pub struct DeepSeek {
     pub api_key: Option<String>,
     /// Without a trailing slash.

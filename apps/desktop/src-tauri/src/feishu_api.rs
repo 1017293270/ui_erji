@@ -1,5 +1,8 @@
 //! Calls to the Feishu Open Platform: the tenant directory with the app's own token, and the
 //! signed-in person's calendar and tasks with their token (see feishu.rs for sign-in).
+//! With the EchoMind server (the default) each command asks the server instead, which makes the
+//! same calls with the secrets it holds (server.rs); the direct calls below remain for debug
+//! builds with ECHOMIND_SERVER_URL=direct.
 //!
 //! Endpoints, under https://open.feishu.cn/open-apis:
 //! - auth/v3/tenant_access_token/internal
@@ -18,7 +21,8 @@ use url::Url;
 
 use crate::config::{self, FeishuApp};
 use crate::feishu::{self, now, UserToken, NOT_CONFIGURED};
-use crate::{dates, storage};
+use crate::{config::server_url, dates, server, storage};
+use reqwest::Method;
 
 const OPEN_API: &str = "https://open.feishu.cn/open-apis";
 /// Without `refresh`, a directory younger than this comes from the cache.
@@ -68,6 +72,16 @@ impl From<String> for Failed {
     fn from(message: String) -> Self {
         Failed { message, offline: false }
     }
+}
+
+impl From<server::Failure> for Failed {
+    fn from(failure: server::Failure) -> Self {
+        Failed { offline: failure.offline(), message: failure.into() }
+    }
+}
+
+fn decode<T: for<'de> Deserialize<'de>>(value: Value) -> Result<T, Failed> {
+    serde_json::from_value(value).map_err(|e| Failed::from(format!("EchoMind 服务器的回复无法解析：{e}")))
 }
 
 fn failed(error: ApiError, identity: Identity) -> Failed {
@@ -384,7 +398,7 @@ async fn fetch_directory(base: &str, token: &str) -> Result<(Vec<Person>, Vec<Hi
 // ---------------------------------------------------------------------------
 // Calendar
 
-#[derive(Serialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Attendees {
     event_title: String,
@@ -505,7 +519,7 @@ fn meeting_window(start: &str, end: &str) -> Result<(i64, i64), String> {
 // ---------------------------------------------------------------------------
 // Tasks
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewTask {
     title: String,
@@ -515,7 +529,7 @@ pub struct NewTask {
     assignee_id: String,
 }
 
-#[derive(Serialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct CreatedTask {
     guid: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -581,11 +595,22 @@ pub async fn feishu_directory(app: AppHandle, refresh: Option<bool>) -> Result<V
     if let Some(cache) = cached.as_ref().filter(|c| !refresh && c.fetched_at + DIRECTORY_MAX_AGE > now()) {
         return Ok(cache.people.clone());
     }
-    match as_app(&app, |token| async move { fetch_directory(OPEN_API, &token).await }).await {
-        Ok((people, hints)) => {
+    let fetched = if server_url().is_some() {
+        let query: &[(&str, &str)] = if refresh { &[("refresh", "1")] } else { &[] };
+        match server::call(&app, Method::GET, "/v1/directory", query, None).await {
+            Ok(value) => decode::<Vec<Person>>(value),
+            Err(failure) => Err(failure.into()),
+        }
+    } else {
+        as_app(&app, |token| async move { fetch_directory(OPEN_API, &token).await }).await.map(|(people, hints)| {
             for hint in hints {
                 eprintln!("飞书通讯录：开通「{}」后才能读到{}。", hint.scope, hint.unlocks);
             }
+            people
+        })
+    };
+    match fetched {
+        Ok(people) => {
             let cache = DirectoryCache { fetched_at: now(), people };
             if let Err(e) = serde_json::to_vec(&cache).map_err(std::io::Error::from).and_then(|bytes| storage::write_atomic(&path, &bytes)) {
                 eprintln!("保存通讯录缓存失败：{e}");
@@ -606,6 +631,10 @@ pub async fn feishu_directory(app: AppHandle, refresh: Option<bool>) -> Result<V
 #[tauri::command]
 pub async fn feishu_meeting_attendees(app: AppHandle, start: String, end: String) -> Result<Option<Attendees>, String> {
     let window = meeting_window(&start, &end)?;
+    if server_url().is_some() {
+        let found = server::call(&app, Method::GET, "/v1/calendar/attendees", &[("start", &start), ("end", &end)], None).await.map_err(Failed::from)?;
+        return Ok(decode(found)?);
+    }
     Ok(as_user(&app, |token| async move { meeting_attendees(OPEN_API, &token, window).await }).await?)
 }
 
@@ -613,6 +642,11 @@ pub async fn feishu_meeting_attendees(app: AppHandle, start: String, end: String
 #[tauri::command]
 pub async fn feishu_create_task(app: AppHandle, task: NewTask) -> Result<CreatedTask, String> {
     let body = &task_body(&task)?;
+    if server_url().is_some() {
+        let task = serde_json::to_value(&task).map_err(|e| e.to_string())?;
+        let created = server::call(&app, Method::POST, "/v1/feishu/tasks", &[], Some(&task)).await.map_err(Failed::from)?;
+        return Ok(decode(created)?);
+    }
     Ok(as_user(&app, move |token| async move { create_task(OPEN_API, &token.access_token, body).await }).await?)
 }
 

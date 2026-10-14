@@ -1,13 +1,13 @@
 //! 飞书 sign-in and the saved session.
 //!
 //! Sign-in is OAuth with PKCE: the system browser opens Feishu's consent page and
-//! Feishu redirects back to a one-shot listener on 127.0.0.1. The App Secret and
-//! the tokens stay in this process; the webview only ever sees the profile.
+//! Feishu redirects back to a one-shot listener on 127.0.0.1. The webview only ever
+//! sees the profile.
 //!
-//! Credentials come from FEISHU_APP_ID / FEISHU_APP_SECRET (see config.rs). Before the
-//! app goes to customers the Secret has to move to a server: anything inside an
-//! installer can be pulled out of it. The API calls made with these tokens live in
-//! feishu_api.rs.
+//! With the EchoMind server (the default) only the browser half happens here: the code goes to
+//! the server, which holds the App Secret and the tokens (server.rs). Debug builds can still
+//! sign in directly with FEISHU_APP_ID / FEISHU_APP_SECRET from .env.local (see config.rs);
+//! the API calls made with those tokens live in feishu_api.rs.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -26,7 +26,7 @@ use tokio::sync::{mpsc, Mutex, Notify};
 use url::Url;
 
 use crate::config::{self, FeishuApp};
-use crate::storage;
+use crate::{server, storage};
 
 const AUTHORIZE: &str = "https://accounts.feishu.cn/open-apis/authen/v1/authorize";
 /// v2 rather than the newer accounts.feishu.cn/oauth/v3/token: Feishu checks PKCE only on
@@ -57,14 +57,14 @@ pub struct Feishu {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
-    name: String,
-    en_name: Option<String>,
-    open_id: String,
-    union_id: Option<String>,
-    email: Option<String>,
-    tenant_key: Option<String>,
+    pub(crate) name: String,
+    pub(crate) en_name: Option<String>,
+    pub(crate) open_id: String,
+    pub(crate) union_id: Option<String>,
+    pub(crate) email: Option<String>,
+    pub(crate) tenant_key: Option<String>,
     /// A data: URL, so the webview needs no access to Feishu's image hosts.
-    avatar: Option<String>,
+    pub(crate) avatar: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -144,7 +144,7 @@ fn random(bytes: usize) -> Result<String, String> {
     Ok(URL_SAFE_NO_PAD.encode(buf))
 }
 
-fn redirect_uri() -> String {
+pub(crate) fn redirect_uri() -> String {
     format!("http://127.0.0.1:{CALLBACK_PORT}{CALLBACK_PATH}")
 }
 
@@ -158,8 +158,9 @@ fn missing_scopes(granted: Option<&str>) -> Vec<&'static str> {
 // ---------------------------------------------------------------------------
 // Sign-in
 
-pub async fn login(app: &AppHandle) -> Result<Profile, String> {
-    let creds = config::feishu().ok_or(NOT_CONFIGURED)?;
+/// The browser half of sign-in: opens Feishu's consent page and waits on the loopback address
+/// for the code. Returns the code and the PKCE verifier that goes with it.
+pub(crate) async fn authorize(app: &AppHandle, app_id: &str, scopes: &str) -> Result<(String, String), String> {
     let feishu = app.state::<Feishu>();
     feishu.cancel.notify_waiters();
     let listener = bind().await?;
@@ -168,14 +169,13 @@ pub async fn login(app: &AppHandle) -> Result<Profile, String> {
     let verifier = random(48)?;
     let state = random(16)?;
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-    let scopes = SCOPES.join(" ");
     let url = Url::parse_with_params(
         AUTHORIZE,
         [
-            ("client_id", creds.app_id.as_str()),
+            ("client_id", app_id),
             ("response_type", "code"),
             ("redirect_uri", redirect.as_str()),
-            ("scope", scopes.as_str()),
+            ("scope", scopes),
             ("state", state.as_str()),
             ("code_challenge", challenge.as_str()),
             ("code_challenge_method", "S256"),
@@ -189,10 +189,18 @@ pub async fn login(app: &AppHandle) -> Result<Profile, String> {
         _ = feishu.cancel.notified() => return Err("已取消飞书登录。".into()),
         _ = tokio::time::sleep(LOGIN_TIMEOUT) => return Err("5 分钟内没有完成飞书授权，请再试一次。".into()),
     };
+    Ok((code, verifier))
+}
 
+pub async fn login(app: &AppHandle) -> Result<Profile, String> {
+    if config::server_url().is_some() {
+        return server::login(app).await;
+    }
+    let creds = config::feishu().ok_or(NOT_CONFIGURED)?;
+    let (code, verifier) = authorize(app, &creds.app_id, &SCOPES.join(" ")).await?;
     let tokens = request_token(
         &creds,
-        json!({ "grant_type": "authorization_code", "code": code, "redirect_uri": redirect, "code_verifier": verifier }),
+        json!({ "grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri(), "code_verifier": verifier }),
     )
     .await?;
     let profile = fetch_profile(&tokens.access_token).await?;
@@ -205,6 +213,7 @@ pub async fn login(app: &AppHandle) -> Result<Profile, String> {
         profile,
     };
     {
+        let feishu = app.state::<Feishu>();
         let _guard = feishu.session.lock().await;
         save(app, &session)?;
     }
@@ -397,7 +406,7 @@ async fn fetch_profile(token: &str) -> Result<Profile, String> {
     })
 }
 
-async fn avatar_data_url(url: &str) -> Option<String> {
+pub(crate) async fn avatar_data_url(url: &str) -> Option<String> {
     let response = http().get(url).send().await.ok()?.error_for_status().ok()?;
     let mime = response
         .headers()
@@ -504,6 +513,9 @@ pub(crate) async fn expire_access_token(app: &AppHandle) {
 
 #[tauri::command]
 pub async fn feishu_status(app: AppHandle) -> Value {
+    if config::server_url().is_some() {
+        return server::status(&app).await;
+    }
     let session = match fresh(&app).await {
         Fresh::Valid(session) | Fresh::Offline(session, _) => Some(session),
         Fresh::SignedOut => None,
@@ -528,6 +540,9 @@ pub fn feishu_cancel(app: AppHandle) {
 
 #[tauri::command]
 pub async fn feishu_logout(app: AppHandle) {
+    if config::server_url().is_some() {
+        return server::logout(&app).await;
+    }
     let feishu = app.state::<Feishu>();
     let _guard = feishu.session.lock().await;
     forget(&app);

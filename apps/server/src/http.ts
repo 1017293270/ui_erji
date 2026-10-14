@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { type ApiDeps, api } from "./api";
 import type { Sql } from "./db";
 import { log } from "./log";
 
@@ -30,7 +31,7 @@ export async function checkHealth(sql: Sql): Promise<Health> {
   }
 }
 
-export function createApp(deps: { sql: Sql; version: string }): Hono {
+export function createApp(deps: ApiDeps & { version: string }): Hono {
   const app = new Hono();
 
   app.use(async (c, next) => {
@@ -44,6 +45,8 @@ export function createApp(deps: { sql: Sql; version: string }): Hono {
     const health = await checkHealth(deps.sql);
     return c.json({ ...health, version: deps.version }, health.ok ? 200 : 503);
   });
+
+  app.route("/v1", api(deps));
 
   app.notFound((c) => c.json(fail("not_found", "没有这个接口。"), 404));
   app.onError((err, c) => {

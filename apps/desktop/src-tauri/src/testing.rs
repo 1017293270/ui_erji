@@ -33,7 +33,8 @@ impl Request {
     }
 }
 
-type Handler = dyn Fn(&Request) -> (u16, String) + Send + Sync;
+/// Status, extra response headers, body.
+type Handler = dyn Fn(&Request) -> (u16, Vec<(String, String)>, String) + Send + Sync;
 
 pub struct Server {
     addr: std::net::SocketAddr,
@@ -42,6 +43,14 @@ pub struct Server {
 
 impl Server {
     pub async fn start(handler: impl Fn(&Request) -> (u16, String) + Send + Sync + 'static) -> Self {
+        Self::start_with_headers(move |request| {
+            let (status, body) = handler(request);
+            (status, Vec::new(), body)
+        })
+        .await
+    }
+
+    pub async fn start_with_headers(handler: impl Fn(&Request) -> (u16, Vec<(String, String)>, String) + Send + Sync + 'static) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -94,10 +103,11 @@ async fn serve(mut stream: TcpStream, log: Arc<Mutex<Vec<Request>>>, handler: Ar
     }
     let body = String::from_utf8_lossy(&buf[head_end..]).to_string();
     let request = Request { method, target, headers, body };
-    let (status, reply) = handler(&request);
+    let (status, extra, reply) = handler(&request);
     log.lock().unwrap().push(request);
+    let extra: String = extra.iter().map(|(k, v)| format!("{k}: {v}\r\n")).collect();
     let response = format!(
-        "HTTP/1.1 {status} X\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+        "HTTP/1.1 {status} X\r\nContent-Type: application/json; charset=utf-8\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{reply}",
         reply.len()
     );
     let _ = stream.write_all(response.as_bytes()).await;

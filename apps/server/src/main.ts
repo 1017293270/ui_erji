@@ -3,6 +3,7 @@ import { createServer } from "node:https";
 import { serve } from "@hono/node-server";
 import { loadConfig } from "./config";
 import { connect, migrate } from "./db";
+import { Feishu } from "./feishu/client";
 import { createApp } from "./http";
 import { run } from "./lifecycle";
 import { log } from "./log";
@@ -16,7 +17,13 @@ run("api", async () => {
   const sql = connect(config.databaseUrl);
   await migrate(sql);
 
-  const app = createApp({ sql, version: VERSION });
+  const app = createApp({
+    sql,
+    version: VERSION,
+    feishu: new Feishu({ app: config.feishu }),
+    dataKey: config.dataKey,
+    llm: config.deepseek,
+  });
   const tls = config.tls && { cert: readFileSync(config.tls.cert), key: readFileSync(config.tls.key) };
   const server = serve(
     {

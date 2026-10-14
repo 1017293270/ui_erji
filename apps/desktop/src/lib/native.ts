@@ -164,7 +164,8 @@ export async function meetingSave(meeting: Meeting): Promise<void> {
   await invoke("meeting_save", { meeting });
 }
 
-export type LlmStatus = { configured: boolean; model: string; baseUrl: string };
+/** `via`: through the EchoMind server (which holds the key), or straight to DeepSeek in debug builds. */
+export type LlmStatus = { configured: boolean; model: string; baseUrl: string; via?: "server" | "direct" };
 
 export async function llmStatus(): Promise<LlmStatus | null> {
   if (!isTauri) return null;

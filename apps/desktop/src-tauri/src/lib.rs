@@ -1,6 +1,7 @@
 //! EchoMind desktop shell: two windows (the main app and the floating recorder),
 //! a tray menu, the `echomind-capture` and `echomind-transcribe` sidecars, meeting
-//! storage, and the proxies to Feishu and DeepSeek that keep secrets out of the webview.
+//! storage, and the calls to Feishu and DeepSeek, through the EchoMind server, that keep
+//! secrets out of the webview and out of the app.
 
 mod capture;
 mod config;
@@ -8,6 +9,7 @@ mod dates;
 mod feishu;
 mod feishu_api;
 mod llm;
+mod server;
 mod storage;
 #[cfg(test)]
 mod testing;
