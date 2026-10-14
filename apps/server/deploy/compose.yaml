@@ -1,0 +1,60 @@
+# EchoMind on echomind-server. Lives at /srv/echomind/compose.yaml; deploy.sh copies it there.
+# Secrets come from /srv/echomind/.env (0600), which setup.sh creates and nothing ever prints.
+name: echomind
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: echomind
+      POSTGRES_USER: echomind
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?missing in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql
+    networks: [db]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "echomind", "-d", "echomind"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  api:
+    build: ./app
+    image: echomind-server:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://echomind:${POSTGRES_PASSWORD}@postgres:5432/echomind
+      TLS_CERT: /certs/server.pem
+      TLS_KEY: /certs/server.key
+    volumes:
+      - ./certs:/certs:ro
+    ports:
+      - "8443:8443"
+    networks: [db, default]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    image: echomind-server:latest
+    # Built by the api service; deploy.sh builds before it starts anything.
+    pull_policy: never
+    command: ["node", "--enable-source-maps", "dist/worker.js"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://echomind:${POSTGRES_PASSWORD}@postgres:5432/echomind
+    networks: [db, default]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+
+networks:
+  # No way in or out except through api and worker.
+  db:
+    internal: true

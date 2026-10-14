@@ -1,0 +1,26 @@
+{
+  "name": "@echomind/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "dev:worker": "tsx watch src/worker.ts",
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:db": "bash scripts/test-db.sh",
+    "deploy": "bash deploy/deploy.sh"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.3",
+    "hono": "4.13.13",
+    "postgres": "3.4.9",
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "esbuild": "0.28.2",
+    "tsx": "^4.23.15"
+  }
+}
