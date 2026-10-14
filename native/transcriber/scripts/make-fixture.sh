@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Builds a synthetic recording folder in the echomind-capture format, from macOS `say`.
 #
-#   scripts/make-fixture.sh <out_dir> [--repeat N] [--echo] [--voices MIC,A,B]
+#   scripts/make-fixture.sh <out_dir> [--repeat N] [--echo] [--in-person] [--voices MIC,A,B]
 #
 # - mic track: one voice (the local user); system track: two other voices.
+# - --in-person puts all three voices on the mic track, as around a table; the system
+#   track stays silent.
 # - 60 s segments with one pause (no files during it), like a real `record` run.
 # - --repeat N plays the meeting N times in a row (for long-meeting / speed tests).
 # - --echo also leaks the system track into the mic, as when the user has no headphones.
@@ -13,15 +15,17 @@
 # Never point this at the real recordings folder; it only writes into <out_dir>.
 set -euo pipefail
 
-out=${1:?"用法：make-fixture.sh <输出文件夹> [--repeat N] [--echo] [--voices MIC,A,B]"}
+out=${1:?"用法：make-fixture.sh <输出文件夹> [--repeat N] [--echo] [--in-person] [--voices MIC,A,B]"}
 shift
 repeat=1
 echo_leak=0
+in_person=0
 voices="Tingting,Eddy (Chinese (China mainland)),Meijia"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repeat) repeat=$2; shift 2 ;;
     --echo) echo_leak=1; shift ;;
+    --in-person) in_person=1; shift ;;
     --voices) voices=$2; shift 2 ;;
     *) echo "未知参数：$1" >&2; exit 2 ;;
   esac
@@ -85,11 +89,11 @@ while IFS=$'\t' read -r who text; do
 done <<<"$script"
 
 printf '%s\n' "${lines[@]}" >"$clips/lines.tsv"
-python3 -I - "$out" "$clips/lines.tsv" "$repeat" "$echo_leak" <<'PY'
+python3 -I - "$out" "$clips/lines.tsv" "$repeat" "$echo_leak" "$in_person" <<'PY'
 import array, json, random, sys, wave
 from datetime import datetime, timezone
 
-out, lines, repeat, echo_leak = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4] == "1"
+out, lines, repeat, echo_leak, in_person = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4] == "1", sys.argv[5] == "1"
 SR = 16000
 SEGMENT = 60 * SR
 PAUSE = 10 * SR
@@ -117,13 +121,14 @@ for i, item in enumerate(meeting):
         continue
     who, voice, path, text = item
     samples = clips.setdefault(path, load(path))
-    track = mic if who == "me" else system
+    on_mic = who == "me" or in_person
+    track = mic if on_mic else system
     for buf in (mic, system):
         if len(buf) < t + len(samples):
             buf.extend([0] * (t + len(samples) - len(buf)))
     track[t:t + len(samples)] = samples
     expected.append({
-        "track": "mic" if who == "me" else "system",
+        "track": "mic" if on_mic else "system",
         "who": who,
         "voice": voice,
         "start": t * 1000 // SR,
@@ -189,7 +194,7 @@ with open(f"{out}/manifest.json", "w") as f:
     json.dump(manifest, f, ensure_ascii=False)
     f.write("\n")
 with open(f"{out}/expected.json", "w") as f:
-    json.dump({"echo": echo_leak, "utterances": expected}, f, ensure_ascii=False, indent=1)
+    json.dump({"echo": echo_leak, "inPerson": in_person, "utterances": expected}, f, ensure_ascii=False, indent=1)
     f.write("\n")
 speech = sum(u["end"] - u["start"] for u in expected) / 1000
 print(f"{out}: {end / SR:.1f} s, {len(segments)} 段文件, 暂停 {len(paused)} 次, {len(expected)} 句 ({speech:.0f} s 语音)")

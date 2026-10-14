@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Check, Mic, RefreshCw } from "lucide-react";
-import type { Minutes, Point, Speaker } from "@echomind/shared";
+import type { Minutes, Point, Scene, Speaker } from "@echomind/shared";
 import { clock, dayLabel, timeOfDay } from "@echomind/shared";
 import { cn } from "@echomind/ui";
 import { Avatar, Badge, Button, SpeakerDot, Tabs } from "../../components/ui";
 import { BasisBadge } from "../../components/TodoRow";
 import { dueLabel } from "../../lib/dates";
+import { SCENE_NAME, STAGE_LABEL } from "../../lib/process";
 import { navigate } from "../../lib/router";
 import { LIVE, speakerName, speakerTone, useStore } from "../../lib/store";
 import { useDetail } from "./context";
@@ -162,12 +163,11 @@ function SpeakersTab({ naming, onNaming }: { naming: string | null; onNaming: (i
   const store = useStore();
   const { meeting, segments, speakers } = useDetail();
   const total = segments.reduce((sum, s) => sum + (s.end - s.start), 0) || 1;
+  const inPerson = meeting.transcript?.scene === "in-person";
 
   return (
     <div className="fade-in flex flex-col gap-2.5">
-      <p className="mb-1 text-[12.5px] leading-relaxed text-muted-foreground">
-        麦克风那一路是你本人；系统声音那一路按声音区分成不同的人。改了名字，整场逐字稿和待办都会跟着更新。
-      </p>
+      <SceneNote />
       {[...speakers.values()].map((s) => {
         const share = segments.filter((x) => x.speakerId === s.id).reduce((sum, x) => sum + (x.end - x.start), 0) / total;
         const lines = segments.filter((x) => x.speakerId === s.id).length;
@@ -187,7 +187,7 @@ function SpeakersTab({ naming, onNaming }: { naming: string | null; onNaming: (i
                   {sourceText(s)} · {lines} 句 · 发言 {Math.round(share * 100)}%
                 </p>
               </div>
-              {s.source !== "self" && !open ? (
+              {(s.source !== "self" || inPerson) && !open ? (
                 <Button variant={person ? "ghost" : "subtle"} size="sm" onClick={() => onNaming(s.id)}>
                   {person ? "更改" : "命名"}
                 </Button>
@@ -213,8 +213,107 @@ function sourceText(s: Speaker) {
     case "manual":
       return "手动命名";
     default:
-      return "未识别 · 系统声音";
+      return `未识别 · ${s.track === "mic" ? "麦克风" : "系统声音"}`;
   }
+}
+
+/** Which kind of meeting the voices were told apart for, and telling them apart again. */
+function SceneNote() {
+  const store = useStore();
+  const { meeting } = useDetail();
+  // Transcripts from before scenes were all done the online way.
+  const scene: Scene = meeting.transcript?.scene ?? "online";
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<Scene>(scene);
+  const [people, setPeople] = useState<number | null>(null);
+  const job = store.jobs[meeting.id];
+  const counts = picked === "in-person" ? [2, 3, 4, 5, 6] : [1, 2, 3, 4, 5];
+
+  const chip = (selected: boolean, label: string, onClick: () => void) => (
+    <button
+      key={label}
+      onClick={onClick}
+      className={cn(
+        "no-drag num h-8 min-w-10 rounded-[10px] border bg-card px-3 text-[13px] transition-colors",
+        selected ? "border-foreground" : "border-border hover:border-input",
+      )}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="mb-1 rounded-[12px] bg-secondary px-3.5 py-3">
+      <div className="flex items-center gap-2">
+        <p className="flex-1 text-[13px] font-medium">{SCENE_NAME[scene]}会议</p>
+        {!open && !job ? (
+          <Button
+            size="sm"
+            onClick={() => {
+              setPicked(scene);
+              setPeople(null);
+              setOpen(true);
+            }}
+          >
+            重新区分
+          </Button>
+        ) : null}
+      </div>
+      <p className="mt-1 text-[12.5px] leading-relaxed text-muted-foreground">
+        {scene === "in-person"
+          ? "麦克风录到的每个人都按音色分开，编成说话人 1、2、3……点「命名」对应到具体的人，包括你自己。"
+          : "麦克风那一路是你本人；电脑里传出来的声音按音色分成不同的人。"}
+        改名后逐字稿和待办会跟着更新，纪要里的名字要在「纪要」里点「重新生成」才会换。
+      </p>
+      {job && !job.error ? (
+        <p className="mt-2 flex items-center gap-1.5 text-[12px] text-muted-foreground">
+          <RefreshCw className="size-3.5 animate-spin" aria-hidden />
+          {job.stage ? STAGE_LABEL[job.stage] : "排队中"}
+          {job.progress > 0 ? <span className="num">{Math.round(job.progress * 100)}%</span> : null}
+        </p>
+      ) : null}
+      {open ? (
+        <div className="fade-in mt-3 border-t border-soft-line pt-3">
+          <p className="mb-2 text-[12px] text-muted-foreground">会议场景</p>
+          <div className="flex gap-1.5">
+            {(["in-person", "online"] as const).map((s) =>
+              chip(picked === s, SCENE_NAME[s], () => {
+                setPicked(s);
+                setPeople(null);
+              }),
+            )}
+          </div>
+          <p className="mt-3 mb-2 text-[12px] text-muted-foreground">
+            {picked === "in-person" ? "现场有几个人说话（包括你）" : "对方有几个人说话（不包括你）"}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {chip(people === null, "自动", () => setPeople(null))}
+            {counts.map((n) => chip(people === n, String(n), () => setPeople(n)))}
+          </div>
+          <p className="mt-1.5 text-[12px] text-muted-foreground">不确定就选「自动」；有两个人被当成了一个人，就选实际人数。</p>
+          <p className="mt-3 text-[12.5px] leading-relaxed">
+            会重新转写整场录音，再重新生成纪要和待办草稿，要等几分钟。已命名的说话人需要重新命名；已确认和已推送的待办不受影响。
+          </p>
+          <div className="mt-3 flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                setOpen(false);
+                if (LIVE) store.rediarize(meeting.id, { scene: picked, speakers: people ?? undefined });
+                else store.toast("示例会议不能重新区分说话人。");
+              }}
+            >
+              重新区分
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 /** Naming a voice: this meeting's participants first, then everyone else. */

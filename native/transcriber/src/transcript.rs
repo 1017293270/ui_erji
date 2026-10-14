@@ -18,6 +18,29 @@ impl Track {
     }
 }
 
+/// Where the meeting happened, which decides what the microphone holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Scene {
+    /// Around one table: everyone in the room is on the microphone, told apart by voice.
+    InPerson,
+    /// A call: the microphone is the person recording, the others come from the computer.
+    Online,
+}
+
+impl Scene {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Scene::InPerson => "in-person",
+            Scene::Online => "online",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        [Scene::InPerson, Scene::Online].into_iter().find(|scene| scene.as_str() == s)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Speaker {
@@ -26,7 +49,7 @@ pub struct Speaker {
     pub track: Track,
     /// Always null here; the webview links speakers to people.
     pub person_id: Option<String>,
-    /// "self" for the microphone, "unknown" for diarized voices.
+    /// "self" for the person recording, "unknown" for diarized voices.
     pub source: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f32>,
@@ -49,6 +72,7 @@ pub struct Segment {
 pub struct Transcript {
     pub meeting_id: String,
     pub language: String,
+    pub scene: Scene,
     pub speakers: Vec<Speaker>,
     pub segments: Vec<Segment>,
 }

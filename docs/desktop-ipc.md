@@ -119,12 +119,18 @@ Feishu calls described below with the app's token or the person's.
 | --- | --- | --- |
 | `transcribe_models` | – | `{ ready: boolean, downloadBytes: number, models: { id, name, bytes, ready }[] }` |
 | `transcribe_download` | – | `()` — progress on `transcribe://download` `{ received, total }` |
-| `transcribe_start` | `meetingId: string` | `()` — runs in the background |
+| `transcribe_start` | `meetingId: string, scene?: "in-person" \| "online", speakers?: number` | `()` — runs in the background |
 
 The work runs in the `echomind-transcribe` sidecar (`native/transcriber`, built by its
 `build.sh`), one meeting at a time; models live in `models/`. A finished run also writes
 `recordings/<id>/transcript.json`, and `transcribe_start` answers from that file when it exists.
 Subscribe to the events before calling `transcribe_start`.
+
+Without `scene` and `speakers`, the transcriber judges from the audio whether the meeting was in
+person (everyone on the microphone, told apart by voice) or online (the microphone is the person
+recording), and records it as `transcript.scene`. Passing either transcribes again as told, even
+when `transcript.json` exists, and replaces the file only if the new run succeeds. `speakers`
+(1–20) is how many people spoke: in person, everyone in the room; online, the other side.
 
 Events on `transcribe://progress`:
 

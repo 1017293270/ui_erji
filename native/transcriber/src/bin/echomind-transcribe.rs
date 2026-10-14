@@ -3,7 +3,8 @@
 //!
 //!   echomind-transcribe models   [--models-dir DIR]
 //!   echomind-transcribe download [--models-dir DIR] [--json]
-//!   echomind-transcribe run <recording_dir> [--out transcript.json] [--models-dir DIR] [--json]
+//!   echomind-transcribe run <recording_dir> [--scene in-person|online] [--speakers N] [--out transcript.json]
+//!                           [--models-dir DIR] [--json]
 //!
 //! Without --json, results go to stdout (or --out) and progress to stderr for people.
 //! With --json, stdout carries one JSON object per line (`progress`, `download`, then
@@ -17,14 +18,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use echomind_transcriber::{download_models, model_status, transcribe, Error, ErrorKind};
+use echomind_transcriber::{download_models, model_status, transcribe, Error, ErrorKind, Hints, Scene};
 use serde_json::{json, Value};
 
 const USAGE: &str = "用法：
   echomind-transcribe models   [--models-dir DIR]
   echomind-transcribe download [--models-dir DIR] [--json]
-  echomind-transcribe run <录音文件夹> [--out transcript.json] [--models-dir DIR] [--json]
+  echomind-transcribe run <录音文件夹> [--scene in-person|online] [--speakers N] [--out transcript.json]
+                         [--models-dir DIR] [--json]
 
+--scene：in-person 是面对面开会，麦克风录到的每个人都按声音区分；online 是线上会议，麦克风只算你本人。
+--speakers：有几个人说话。面对面时是现场所有人（包括你），线上时是对方（不包括你）。
+这两项不写就根据录音自动判断。
 模型目录默认是应用数据目录下的 models/，也可以用环境变量 ECHOMIND_MODELS_DIR 指定。
 ECHOMIND_MODEL_MIRROR 可以把下载地址换成镜像（替换 https://github.com/k2-fsa/sherpa-onnx/releases/download）。
 --json：stdout 每行一个 JSON 事件；stdin 收到 cancel 或 EOF 时停止。";
@@ -56,12 +61,27 @@ fn main() -> ExitCode {
     let mut positional = Vec::new();
     let mut models_dir = None;
     let mut out = None;
+    let mut hints = Hints::default();
     let mut machine = false;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--models-dir" => models_dir = it.next().map(PathBuf::from),
             "--out" => out = it.next().map(PathBuf::from),
+            "--scene" => match it.next().and_then(|s| Scene::parse(s)) {
+                Some(s) => hints.scene = Some(s),
+                None => {
+                    eprintln!("--scene 只能是 in-person 或 online\n\n{USAGE}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--speakers" => match it.next().and_then(|n| n.parse().ok()).filter(|n| (1..=20).contains(n)) {
+                Some(n) => hints.people = Some(n),
+                None => {
+                    eprintln!("--speakers 是 1 到 20 之间的人数\n\n{USAGE}");
+                    return ExitCode::from(2);
+                }
+            },
             "--json" => machine = true,
             "-h" | "--help" => {
                 println!("{USAGE}");
@@ -95,7 +115,7 @@ fn main() -> ExitCode {
             Ok(())
         }
         Some("download") => download(&models_dir, &cancel, machine),
-        Some("run") if positional.len() == 2 => run(Path::new(&positional[1]), &models_dir, out, &cancel, machine),
+        Some("run") if positional.len() == 2 => run(Path::new(&positional[1]), &models_dir, hints, out, &cancel, machine),
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
@@ -143,12 +163,19 @@ fn download(models_dir: &Path, cancel: &AtomicBool, machine: bool) -> Result<(),
     Ok(())
 }
 
-fn run(dir: &Path, models_dir: &Path, out: Option<PathBuf>, cancel: &AtomicBool, machine: bool) -> Result<(), Error> {
+fn run(
+    dir: &Path,
+    models_dir: &Path,
+    hints: Hints,
+    out: Option<PathBuf>,
+    cancel: &AtomicBool,
+    machine: bool,
+) -> Result<(), Error> {
     let started = Instant::now();
     let mut stage_started = Instant::now();
     let mut current = None;
     let mut last_report = Instant::now();
-    let transcript = transcribe(dir, models_dir, cancel, |stage, progress| {
+    let transcript = transcribe(dir, models_dir, hints, cancel, |stage, progress| {
         let changed = current != Some(stage);
         if changed && !machine {
             if let Some(prev) = current {
@@ -190,7 +217,8 @@ fn run(dir: &Path, models_dir: &Path, out: Option<PathBuf>, cancel: &AtomicBool,
         as f64
         / 1000.0;
     eprintln!(
-        "{} 段，{} 位说话人，用时 {elapsed:.1} s，录音 {audio:.1} s，RTF {:.3}",
+        "{}，{} 段，{} 位说话人，用时 {elapsed:.1} s，录音 {audio:.1} s，RTF {:.3}",
+        if transcript.scene == Scene::InPerson { "面对面" } else { "线上" },
         transcript.segments.len(),
         transcript.speakers.len(),
         if audio > 0.0 { elapsed / audio } else { 0.0 }

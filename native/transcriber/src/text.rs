@@ -30,7 +30,7 @@ const ECHO_TAIL: u64 = SR * 3 / 10;
 #[derive(Debug, Clone)]
 pub(crate) struct Unit {
     pub track: Track,
-    /// 0 on the mic track; diarized speaker on the system track.
+    /// The diarized voice on its track; always 0 when the mic is only the user.
     pub speaker: usize,
     pub start: u64,
     pub end: u64,
@@ -49,10 +49,53 @@ impl Unit {
     }
 }
 
-/// `system` is the speech on the system track. Mic speech is cut where it starts and
-/// stops, so that if the user has no headphones the echo of the other side ends up in
-/// segments of its own, which `drop_echo` can remove without taking the user's words.
+/// The microphone as one voice, the user's. `system` is the speech on the system track.
+/// Mic speech is cut where it starts and stops, so that if the user has no headphones the
+/// echo of the other side ends up in segments of its own, which `drop_echo` can remove
+/// without taking the user's words.
 pub(crate) fn mic_units(regions: &[Region], system: &[Region]) -> Vec<Unit> {
+    let pieces = cut_at_echo(regions.iter().map(|r| (r.start, r.end)), &echo_zones(system));
+    let mut spans: Vec<(u64, u64, bool)> = Vec::new();
+    for p in pieces {
+        match spans.last_mut() {
+            Some(last) if last.2 == p.2 && p.0 <= last.1 + MERGE_GAP => last.1 = last.1.max(p.1),
+            _ => spans.push(p),
+        }
+    }
+    spans
+        .into_iter()
+        .flat_map(|(start, end, suspect)| {
+            split((start, end), regions).into_iter().map(move |s| Unit { suspect, ..Unit::new(Track::Mic, 0, s) })
+        })
+        .collect()
+}
+
+/// The microphone with several people in the room, told apart by `turns`. Echo of the
+/// system track is cut out and marked as in `mic_units`.
+pub(crate) fn room_units(turns: &[Turn], regions: &[Region], system: &[Region]) -> Vec<Unit> {
+    let zones = echo_zones(system);
+    voices(turns, regions)
+        .into_iter()
+        .flat_map(|t| {
+            cut_at_echo([(t.start, t.end)], &zones).into_iter().flat_map(move |(start, end, suspect)| {
+                split((start, end), regions)
+                    .into_iter()
+                    .map(move |s| Unit { suspect, ..Unit::new(Track::Mic, t.speaker, s) })
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn system_units(turns: &[Turn], regions: &[Region]) -> Vec<Unit> {
+    voices(turns, regions)
+        .into_iter()
+        .flat_map(|t| split((t.start, t.end), regions).into_iter().map(move |s| Unit::new(Track::System, t.speaker, s)))
+        .collect()
+}
+
+/// Where the speakers' sound can be in the microphone: the system track's speech plus
+/// its tail.
+fn echo_zones(system: &[Region]) -> Vec<(u64, u64)> {
     let mut zones: Vec<(u64, u64)> = Vec::new();
     for r in system {
         match zones.last_mut() {
@@ -60,24 +103,27 @@ pub(crate) fn mic_units(regions: &[Region], system: &[Region]) -> Vec<Unit> {
             _ => zones.push((r.start, r.end + ECHO_TAIL)),
         }
     }
+    zones
+}
 
-    // (start, end, suspect)
+/// Cuts sorted spans where echo zones start and end: (start, end, inside a zone).
+fn cut_at_echo(spans: impl IntoIterator<Item = (u64, u64)>, zones: &[(u64, u64)]) -> Vec<(u64, u64, bool)> {
     let mut pieces: Vec<(u64, u64, bool)> = Vec::new();
-    for r in regions {
-        let mut cursor = r.start;
-        let first = zones.partition_point(|z| z.1 <= r.start);
-        for z in zones[first..].iter().take_while(|z| z.0 < r.end) {
+    for (start, end) in spans {
+        let mut cursor = start;
+        let first = zones.partition_point(|z| z.1 <= start);
+        for z in zones[first..].iter().take_while(|z| z.0 < end) {
             if z.0 > cursor {
                 pieces.push((cursor, z.0, false));
             }
-            let end = z.1.min(r.end);
-            if end > cursor.max(z.0) {
-                pieces.push((cursor.max(z.0), end, true));
+            let to = z.1.min(end);
+            if to > cursor.max(z.0) {
+                pieces.push((cursor.max(z.0), to, true));
             }
-            cursor = cursor.max(end);
+            cursor = cursor.max(to);
         }
-        if cursor < r.end {
-            pieces.push((cursor, r.end, false));
+        if cursor < end {
+            pieces.push((cursor, end, false));
         }
     }
     // Slivers are edge effects of the cut, not a change of who is talking.
@@ -93,23 +139,13 @@ pub(crate) fn mic_units(regions: &[Region], system: &[Region]) -> Vec<Unit> {
             _ => kept.push(p),
         }
     }
-
-    let mut spans: Vec<(u64, u64, bool)> = Vec::new();
-    for p in kept {
-        match spans.last_mut() {
-            Some(last) if last.2 == p.2 && p.0 <= last.1 + MERGE_GAP => last.1 = last.1.max(p.1),
-            _ => spans.push(p),
-        }
-    }
-    spans
-        .into_iter()
-        .flat_map(|(start, end, suspect)| {
-            split((start, end), regions).into_iter().map(move |s| Unit { suspect, ..Unit::new(Track::Mic, 0, s) })
-        })
-        .collect()
+    kept
 }
 
-pub(crate) fn system_units(turns: &[Turn], regions: &[Region]) -> Vec<Unit> {
+/// Each stretch of speech to exactly one voice, in order: what the diarizer left out
+/// goes to the nearest voice, overlaps stay with whoever was already talking, and a
+/// voice's turns close together become one.
+fn voices(turns: &[Turn], regions: &[Region]) -> Vec<Turn> {
     // Speech the diarizer left out (it drops turns under 0.3 s, like a lone "好，" before
     // a pause) goes to the nearest voice, so no words are lost.
     let mut turns = turns.to_vec();
@@ -156,9 +192,6 @@ pub(crate) fn system_units(turns: &[Turn], regions: &[Region]) -> Vec<Unit> {
         }
     }
     merged
-        .into_iter()
-        .flat_map(|t| split((t.start, t.end), regions).into_iter().map(move |s| Unit::new(Track::System, t.speaker, s)))
-        .collect()
 }
 
 /// Cuts a span at pauses longer than MERGE_GAP, then halves anything longer than

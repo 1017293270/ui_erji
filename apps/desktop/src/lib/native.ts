@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Meeting, Person, Transcript } from "@echomind/shared";
+import type { Meeting, Person, Scene, Transcript } from "@echomind/shared";
 
 /**
  * The bridge to the native side. Inside the Tauri app, recording runs in the
@@ -220,8 +220,12 @@ export type TranscribeEvent =
   /** kind: cancelled | models_missing | download | recording | engine | io | app. */
   | { meetingId: string; stage: "error"; kind?: string; message: string };
 
-export async function transcribeStart(meetingId: string): Promise<void> {
-  await invoke("transcribe_start", { meetingId });
+/** What the user said about a meeting: the scene, and how many people spoke (in the room, or on the other side of a call). */
+export type TranscribeHints = { scene: Scene; speakers?: number };
+
+/** With hints, transcribes again as told; without, judges everything from the audio and reuses an earlier run. */
+export async function transcribeStart(meetingId: string, hints?: TranscribeHints): Promise<void> {
+  await invoke("transcribe_start", { meetingId, scene: hints?.scene ?? null, speakers: hints?.speakers ?? null });
 }
 
 /** Resolves once listening: start the transcription after it, or its first events are lost. */

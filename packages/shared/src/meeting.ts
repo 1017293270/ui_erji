@@ -70,9 +70,18 @@ export const Segment = z.object({
 });
 export type Segment = z.infer<typeof Segment>;
 
+/**
+ * Where the meeting happened. In person, everyone in the room is on the microphone and
+ * told apart by voice; online, the microphone is the person recording.
+ */
+export const Scene = z.enum(["in-person", "online"]);
+export type Scene = z.infer<typeof Scene>;
+
 export const Transcript = z.object({
   meetingId: z.string(),
   language: z.string().default("zh"),
+  /** Missing on transcripts from before scenes, which were all treated as online. */
+  scene: Scene.optional(),
   speakers: z.array(Speaker),
   segments: z.array(Segment),
 });

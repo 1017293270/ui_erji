@@ -1,9 +1,11 @@
 //! EchoMind's local speech-to-text. Audio never leaves the machine: sherpa-onnx runs
 //! the models on the CPU, and only the transcript goes on to the minutes engine.
 //!
-//! The mic track is the person recording (`S1`); everything the computer played is
-//! the system track, split into speakers `S2…` by diarization. All functions block;
-//! run them on a worker thread and set `cancel` to stop early.
+//! On a call the mic track is the person recording (`S1`, 「我」) and the system track,
+//! everything the computer played, is split into speakers `S2…` by diarization. Around
+//! a table everyone is on the mic track, so it is diarized too and the voices are
+//! numbered `S1…` (still 「我」 if only one voice is found). All functions block; run
+//! them on a worker thread and set `cancel` to stop early.
 
 mod error;
 mod models;
@@ -13,6 +15,7 @@ mod speech;
 mod text;
 mod transcript;
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -20,9 +23,10 @@ use serde::Serialize;
 
 pub use error::{Error, ErrorKind};
 pub use models::{ModelInfo, ModelStatus, MIRROR_ENV};
-pub use transcript::{Segment, Speaker, Track, Transcript};
+pub use transcript::{Scene, Segment, Speaker, Track, Transcript};
 
 use recording::{Recording, SAMPLE_RATE};
+use speech::Region;
 use text::Unit;
 
 /// The steps reported to `on_progress`, each going from 0 to 1.
@@ -33,7 +37,7 @@ pub enum Stage {
     Prepare,
     /// Finding where anyone speaks (VAD), both tracks.
     Speech,
-    /// Telling the voices on the system track apart.
+    /// Telling the voices apart.
     Speakers,
     /// Speech recognition.
     Text,
@@ -49,6 +53,14 @@ impl Stage {
             Stage::Text => "text",
         }
     }
+}
+
+/// What the user said about the meeting; anything left out is judged from the audio.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Hints {
+    pub scene: Option<Scene>,
+    /// How many people spoke: everyone in the room in person, the other side online.
+    pub people: Option<usize>,
 }
 
 /// Which models are on disk and how much is left to download.
@@ -68,6 +80,7 @@ pub fn download_models(models_dir: &Path, cancel: &AtomicBool, on_progress: impl
 pub fn transcribe(
     recording_dir: &Path,
     models_dir: &Path,
+    hints: Hints,
     cancel: &AtomicBool,
     mut on_progress: impl FnMut(Stage, f32),
 ) -> Result<Transcript, Error> {
@@ -94,21 +107,39 @@ pub fn transcribe(
     }
     let regions_of = |kind: Track| regions.iter().find(|(k, _)| *k == kind).map(|(_, r)| r.as_slice()).unwrap_or(&[]);
     on_progress(Stage::Speech, 1.0);
+    let scene = hints.scene.unwrap_or_else(|| guess_scene(&recording, regions_of(Track::Mic), regions_of(Track::System)));
+    // The count is about the voices the scene is about: the room, or the other side of the call.
+    let counted = if scene == Scene::InPerson { Track::Mic } else { Track::System };
 
     check()?;
     on_progress(Stage::Speakers, 0.0);
-    let turns = match &recording.system {
-        Some(system) => speakers::diarize(system, regions_of(Track::System), models_dir, threads, cancel, &mut |p| {
-            on_progress(Stage::Speakers, p)
-        })?,
-        None => Vec::new(),
+    let diarized: Vec<_> = match scene {
+        Scene::InPerson => tracks.clone(),
+        Scene::Online => recording.system.iter().collect(),
     };
+    let speech_of = |kind: Track| regions_of(kind).iter().map(Region::len).sum::<u64>();
+    let total = diarized.iter().map(|t| speech_of(t.kind)).sum::<u64>().max(1);
+    let mut done = 0;
+    let mut turns = Vec::new();
+    for track in diarized {
+        let (base, size) = (done, speech_of(track.kind));
+        let people = hints.people.filter(|_| track.kind == counted);
+        let found = speakers::diarize(track, regions_of(track.kind), models_dir, threads, people, cancel, &mut |p| {
+            on_progress(Stage::Speakers, (base as f32 + p * size as f32) / total as f32)
+        })?;
+        done += size;
+        turns.push((track.kind, found));
+    }
+    let turns_of = |kind: Track| turns.iter().find(|(k, _)| *k == kind).map(|(_, t)| t.as_slice()).unwrap_or(&[]);
     on_progress(Stage::Speakers, 1.0);
 
     check()?;
     on_progress(Stage::Text, 0.0);
-    let mut units = text::mic_units(regions_of(Track::Mic), regions_of(Track::System));
-    units.extend(text::system_units(&turns, regions_of(Track::System)));
+    let mut units = match scene {
+        Scene::InPerson => text::room_units(turns_of(Track::Mic), regions_of(Track::Mic), regions_of(Track::System)),
+        Scene::Online => text::mic_units(regions_of(Track::Mic), regions_of(Track::System)),
+    };
+    units.extend(text::system_units(turns_of(Track::System), regions_of(Track::System)));
     let work: u64 = units.iter().map(|u| u.end - u.start).sum::<u64>().max(1);
     let mut done = 0;
     if !units.is_empty() {
@@ -133,14 +164,29 @@ pub fn transcribe(
     text::drop_echo(&mut units);
     on_progress(Stage::Text, 1.0);
 
-    Ok(assemble(&recording, units))
+    Ok(assemble(&recording, scene, units))
 }
 
-fn assemble(recording: &Recording, mut units: Vec<Unit>) -> Transcript {
+/// A call when the computer played a fair share of the speech (the other side), in
+/// person otherwise. It leans towards in person: taking a call for a room costs little,
+/// since the one voice on the mic still comes out as 「我」, while taking a room for a
+/// call would put everyone in it under 「我」.
+fn guess_scene(recording: &Recording, mic: &[Region], system: &[Region]) -> Scene {
+    let seconds = |regions: &[Region]| regions.iter().map(Region::len).sum::<u64>() / SAMPLE_RATE as u64;
+    let (mic, system) = (seconds(mic), seconds(system));
+    let scene = if recording.mic.is_none() || (system >= 60 && system * 4 >= mic) { Scene::Online } else { Scene::InPerson };
+    debug(|| format!("speech: mic {mic} s, system {system} s -> {}", scene.as_str()));
+    scene
+}
+
+fn assemble(recording: &Recording, scene: Scene, mut units: Vec<Unit>) -> Transcript {
     units.sort_by_key(|u| (u.start, u.end, u.track == Track::System));
 
+    // The mic is the person recording unless it heard several people.
+    let mic_voices: BTreeSet<usize> = units.iter().filter(|u| u.track == Track::Mic).map(|u| u.speaker).collect();
+    let mic_is_me = recording.mic.is_some() && mic_voices.len() <= 1;
     let mut speakers = Vec::new();
-    if recording.mic.is_some() {
+    if mic_is_me {
         speakers.push(Speaker {
             id: "S1".into(),
             label: "我".into(),
@@ -150,33 +196,29 @@ fn assemble(recording: &Recording, mut units: Vec<Unit>) -> Transcript {
             confidence: None,
         });
     }
-    // Remote voices are numbered after filtering, so no id is left without a segment.
-    let mut remote: Vec<usize> = Vec::new();
+    // Voices are numbered by when they first speak, after filtering, so no id is left
+    // without a segment.
+    let mut voices: Vec<((Track, usize), String)> = Vec::new();
     let segments = units
         .into_iter()
         .enumerate()
         .map(|(i, u)| {
-            let speaker_id = match u.track {
-                Track::Mic => "S1".to_string(),
-                Track::System => {
-                    let n = match remote.iter().position(|&s| s == u.speaker) {
-                        Some(p) => p,
-                        None => {
-                            remote.push(u.speaker);
-                            let n = remote.len() + 1;
-                            speakers.push(Speaker {
-                                id: format!("S{n}"),
-                                label: format!("说话人 {n}"),
-                                track: Track::System,
-                                person_id: None,
-                                source: "unknown".into(),
-                                confidence: None,
-                            });
-                            remote.len() - 1
-                        }
-                    };
-                    format!("S{}", n + 2)
-                }
+            let speaker_id = if mic_is_me && u.track == Track::Mic {
+                "S1".to_string()
+            } else if let Some((_, id)) = voices.iter().find(|(v, _)| *v == (u.track, u.speaker)) {
+                id.clone()
+            } else {
+                let n = speakers.len() + 1;
+                speakers.push(Speaker {
+                    id: format!("S{n}"),
+                    label: format!("说话人 {n}"),
+                    track: u.track,
+                    person_id: None,
+                    source: "unknown".into(),
+                    confidence: None,
+                });
+                voices.push(((u.track, u.speaker), format!("S{n}")));
+                format!("S{n}")
             };
             Segment {
                 id: format!("seg-{:04}", i + 1),
@@ -189,7 +231,7 @@ fn assemble(recording: &Recording, mut units: Vec<Unit>) -> Transcript {
         })
         .collect();
 
-    Transcript { meeting_id: recording.meeting_id.clone(), language: "zh".into(), speakers, segments }
+    Transcript { meeting_id: recording.meeting_id.clone(), language: "zh".into(), scene, speakers, segments }
 }
 
 /// Diagnostics on stderr when ECHOMIND_TRANSCRIBE_DEBUG is set.

@@ -6,7 +6,7 @@ import { Clipboard, cn, InboxTray, SearchArt } from "@echomind/ui";
 import { Avatar, Button, MeetingStatusBadge, SourceTag } from "../components/ui";
 import { href, navigate, useLocation } from "../lib/router";
 import { revealRecordings } from "../lib/native";
-import { formatBytes, type Job } from "../lib/process";
+import { formatBytes, STAGE_LABEL, type Job } from "../lib/process";
 import { LIVE, useStore } from "../lib/store";
 import { DetailProvider } from "./meeting/context";
 import { ChapterRail, TranscriptView } from "./meeting/Transcript";
@@ -129,17 +129,6 @@ function NoTranscript({ meeting }: { meeting: Meeting }) {
 }
 
 const STEPS = ["找出说话的片段", "区分说话人", "转成文字", "纪要与待办"];
-
-const STAGE_LABEL: Record<NonNullable<Job["stage"]>, string> = {
-  prepare: "正在读取录音",
-  speech: "正在找出说话的片段",
-  speakers: "正在区分说话人",
-  text: "正在把语音转成文字",
-  attendees: "正在从飞书日历找参会人",
-  chapters: "DeepSeek 正在划分议题",
-  minutes: "DeepSeek 正在写纪要",
-  todos: "DeepSeek 正在找待办",
-};
 
 function stepOf(job: Job | undefined): number {
   if (!job || job.step !== "transcribe") return job?.step === "minutes" ? 3 : 0;

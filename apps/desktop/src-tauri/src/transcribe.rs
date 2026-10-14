@@ -135,10 +135,31 @@ pub async fn transcribe_download(app: AppHandle) -> Result<(), String> {
 
 /// Starts transcribing a recording folder and returns at once; the result comes on
 /// `transcribe://progress` as `done` or `error`. Starting a meeting already underway is a no-op.
+/// `scene` ("in-person" or "online") and `speakers` (how many people spoke) transcribe again
+/// with what the user said; without them both are judged from the audio, and an earlier
+/// finished run is reused.
 #[tauri::command]
-pub async fn transcribe_start(app: AppHandle, meeting_id: String) -> Result<(), String> {
+pub async fn transcribe_start(
+    app: AppHandle,
+    meeting_id: String,
+    scene: Option<String>,
+    speakers: Option<u32>,
+) -> Result<(), String> {
     if !storage::valid_id(&meeting_id) {
         return Err(format!("会议编号「{meeting_id}」不合法。"));
+    }
+    if scene.as_deref().is_some_and(|s| s != "in-person" && s != "online") {
+        return Err("会议场景只能是面对面或线上。".into());
+    }
+    if speakers.is_some_and(|n| !(1..=20).contains(&n)) {
+        return Err("说话人数要在 1 到 20 之间。".into());
+    }
+    let mut hints = Vec::new();
+    if let Some(scene) = scene {
+        hints.extend(["--scene".to_string(), scene]);
+    }
+    if let Some(n) = speakers {
+        hints.extend(["--speakers".to_string(), n.to_string()]);
     }
     let dir = storage::recordings_dir(&app)?.join(&meeting_id);
     if !dir.join("manifest.json").is_file() {
@@ -153,7 +174,7 @@ pub async fn transcribe_start(app: AppHandle, meeting_id: String) -> Result<(), 
         jobs.insert(meeting_id.clone(), None);
     }
     tauri::async_runtime::spawn(async move {
-        let result = transcribe(&app, &meeting_id, &dir).await;
+        let result = transcribe(&app, &meeting_id, &dir, &hints).await;
         app.state::<Transcriber>().jobs.lock().unwrap().remove(&meeting_id);
         let event = match result {
             Ok(transcript) => json!({ "meetingId": meeting_id, "stage": "done", "transcript": transcript }),
@@ -164,10 +185,13 @@ pub async fn transcribe_start(app: AppHandle, meeting_id: String) -> Result<(), 
     Ok(())
 }
 
-/// The transcript, from `transcript.json` if an earlier run finished, otherwise from the sidecar.
-async fn transcribe(app: &AppHandle, id: &str, dir: &Path) -> Result<Value, (String, String)> {
+/// The transcript, from `transcript.json` if an earlier run finished (and nothing new is
+/// asked for in `hints`), otherwise from the sidecar. A new run replaces the file only once
+/// it succeeds.
+async fn transcribe(app: &AppHandle, id: &str, dir: &Path, hints: &[String]) -> Result<Value, (String, String)> {
     let saved = dir.join(TRANSCRIPT_FILE);
-    if let Some(transcript) = std::fs::read(&saved).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
+    let earlier = hints.is_empty().then(|| std::fs::read(&saved).ok()).flatten();
+    if let Some(transcript) = earlier.and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
         if transcript["segments"].is_array() {
             return Ok(transcript);
         }
@@ -184,6 +208,7 @@ async fn transcribe(app: &AppHandle, id: &str, dir: &Path) -> Result<Value, (Str
         .map_err(app_error)?
         .arg("run")
         .arg(dir)
+        .args(hints)
         .arg("--out")
         .arg(&saved)
         .args(["--json", "--models-dir"])

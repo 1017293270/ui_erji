@@ -1,4 +1,4 @@
-//! Who speaks on the system track.
+//! Who speaks on a track: the system track, and on the mic track too around a table.
 //!
 //! sherpa-onnx's diarizer (pyannote segmentation + CAM++ embeddings + clustering) wants
 //! the whole waveform in memory and clusters every 10 s window's embedding at once,
@@ -40,6 +40,13 @@ const LINK_THRESHOLD: f32 = 0.5;
 const SAME_BLOCK_THRESHOLD: f32 = 0.7;
 /// Below this a short block speaker becomes a new speaker instead of joining one.
 const ATTACH_THRESHOLD: f32 = 0.3;
+/// Clustering threshold of the diarizer inside a block (cosine distance).
+const SPLIT_THRESHOLD: f32 = 0.5;
+/// The same with the number of people given: blocks are split more finely and `link`
+/// merges them back down to that number by voiceprint. Forcing the diarizer itself to
+/// that many clusters did worse: windows where two people overlap made a cluster of
+/// their own, and two real voices were squeezed into one.
+const COUNTED_SPLIT_THRESHOLD: f32 = 0.4;
 
 /// A stretch of one voice, timeline samples. `speaker` counts from 0 in order of
 /// first appearance. Turns can overlap where two people talk at once.
@@ -64,11 +71,13 @@ struct BlockSpeaker {
     seconds: f32,
 }
 
+/// `people`: how many voices there are, when the user said so; otherwise found by threshold.
 pub(crate) fn diarize(
     track: &TrackAudio,
     regions: &[Region],
     models_dir: &Path,
     threads: i32,
+    people: Option<usize>,
     cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(f32),
 ) -> Result<Vec<Turn>> {
@@ -76,7 +85,9 @@ pub(crate) fn diarize(
     if blocks.is_empty() {
         return Ok(Vec::new());
     }
-    let diarizer = create_diarizer(models_dir, threads)?;
+    let threshold = if people.is_some() { COUNTED_SPLIT_THRESHOLD } else { SPLIT_THRESHOLD };
+    let diarizer = OfflineSpeakerDiarization::create(&diarizer_config(models_dir, threads, threshold))
+        .ok_or_else(|| engine_error("说话人分离"))?;
     let extractor = SpeakerEmbeddingExtractor::create(&embedding_config(models_dir, threads))
         .ok_or_else(|| engine_error("声纹"))?;
 
@@ -132,7 +143,7 @@ pub(crate) fn diarize(
         on_progress(done as f32 / total as f32);
     }
 
-    let labels = link(&speakers, &pieces);
+    let labels = link(&speakers, &pieces, people);
     crate::debug(|| {
         let mut out = String::from("block speakers (seconds, label, similarities):");
         for (i, a) in speakers.iter().enumerate() {
@@ -211,8 +222,8 @@ fn embedding_config(models_dir: &Path, threads: i32) -> SpeakerEmbeddingExtracto
     }
 }
 
-fn create_diarizer(models_dir: &Path, threads: i32) -> Result<OfflineSpeakerDiarization> {
-    let config = OfflineSpeakerDiarizationConfig {
+fn diarizer_config(models_dir: &Path, threads: i32, threshold: f32) -> OfflineSpeakerDiarizationConfig {
+    OfflineSpeakerDiarizationConfig {
         segmentation: OfflineSpeakerSegmentationModelConfig {
             pyannote: OfflineSpeakerSegmentationPyannoteModelConfig {
                 model: Some(models::SEGMENTATION.path(models_dir, "model.onnx")),
@@ -225,11 +236,10 @@ fn create_diarizer(models_dir: &Path, threads: i32) -> Result<OfflineSpeakerDiar
             provider: Some("cpu".into()),
         },
         embedding: embedding_config(models_dir, threads),
-        clustering: FastClusteringConfig { num_clusters: -1, threshold: 0.5, compute_confidence: false },
+        clustering: FastClusteringConfig { num_clusters: -1, threshold, compute_confidence: false },
         min_duration_on: 0.3,
         min_duration_off: 0.5,
-    };
-    OfflineSpeakerDiarization::create(&config).ok_or_else(|| engine_error("说话人分离"))
+    }
 }
 
 /// One voiceprint from a block speaker's longest stretches, leaving out overlap with
@@ -291,8 +301,10 @@ fn dot(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
-/// Maps block speakers to people. Returns a label per block speaker.
-fn link(speakers: &[BlockSpeaker], pieces: &[(u64, u64, usize)]) -> Vec<usize> {
+/// Maps block speakers to people. Returns a label per block speaker. With `people`
+/// given, the closest clusters keep merging until there are that many, whatever the
+/// thresholds, and no more are started.
+fn link(speakers: &[BlockSpeaker], pieces: &[(u64, u64, usize)], people: Option<usize>) -> Vec<usize> {
     let n = speakers.len();
     let vp = |i: usize| speakers[i].voiceprint.as_deref();
     let mut seeds: Vec<usize> = (0..n).filter(|&i| vp(i).is_some() && speakers[i].seconds >= RELIABLE_SECONDS).collect();
@@ -321,10 +333,14 @@ fn link(speakers: &[BlockSpeaker], pieces: &[(u64, u64, usize)]) -> Vec<usize> {
     let mut clusters: Vec<Vec<usize>> = seeds.iter().map(|&i| vec![i]).collect();
     loop {
         let mut best: Option<(f32, usize, usize)> = None;
+        let too_many = people.is_some_and(|n| clusters.len() > n);
+        if people.is_some() && !too_many {
+            break;
+        }
         for a in 0..clusters.len() {
             for b in a + 1..clusters.len() {
                 let s = average(&clusters[a], &clusters[b]);
-                if s >= threshold(&clusters[a], &clusters[b]) && best.is_none_or(|(top, _, _)| s > top) {
+                if (too_many || s >= threshold(&clusters[a], &clusters[b])) && best.is_none_or(|(top, _, _)| s > top) {
                     best = Some((s, a, b));
                 }
             }
@@ -348,8 +364,9 @@ fn link(speakers: &[BlockSpeaker], pieces: &[(u64, u64, usize)]) -> Vec<usize> {
             .enumerate()
             .map(|(c, members)| (c, members.iter().map(|&j| dot(v, vp(j).unwrap())).sum::<f32>() / members.len() as f32))
             .max_by(|a, b| a.1.total_cmp(&b.1));
+        let full = people.is_some_and(|n| next >= n);
         labels[i] = Some(match best {
-            Some((c, s)) if s >= ATTACH_THRESHOLD => c,
+            Some((c, s)) if s >= ATTACH_THRESHOLD || full => c,
             _ => {
                 next += 1;
                 next - 1

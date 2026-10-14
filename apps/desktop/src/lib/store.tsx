@@ -387,6 +387,7 @@ type Store = State & {
   person: (id: string | null | undefined) => Person | undefined;
   /** Transcribes and summarizes a meeting again (after an error, or to regenerate). */
   process: Processor["retry"];
+  rediarize: Processor["rediarize"];
   downloadModels: Processor["download"];
 };
 
@@ -495,6 +496,7 @@ export function StoreProvider({ children, recorderWindow = false }: { children: 
       toast: (text, tone = "default") => dispatch({ type: "toast", text, tone }),
       person: (id) => (id ? state.people.find((p) => p.id === id) : undefined),
       process: processor.retry,
+      rediarize: processor.rediarize,
       downloadModels: processor.download,
     }),
     [state, processor],

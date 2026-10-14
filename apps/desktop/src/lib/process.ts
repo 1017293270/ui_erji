@@ -1,5 +1,5 @@
 import { DeepSeekProvider, runPipeline, type PipelineStep } from "@echomind/minutes-engine";
-import { dateParts, type Meeting, type Person, type Transcript } from "@echomind/shared";
+import { dateParts, type Meeting, type Person, type Scene, type Transcript } from "@echomind/shared";
 import {
   feishuMeetingAttendees,
   llmFetch,
@@ -10,6 +10,7 @@ import {
   transcribeModels,
   transcribeStart,
   type ModelsStatus,
+  type TranscribeHints,
   type TranscribeStage,
 } from "./native";
 import type { Action, State } from "./store";
@@ -32,11 +33,26 @@ export type Job = {
   error?: string;
 };
 
+export const STAGE_LABEL: Record<NonNullable<Job["stage"]>, string> = {
+  prepare: "正在读取录音",
+  speech: "正在找出说话的片段",
+  speakers: "正在区分说话人",
+  text: "正在把语音转成文字",
+  attendees: "正在从飞书日历找参会人",
+  chapters: "DeepSeek 正在划分议题",
+  minutes: "DeepSeek 正在写纪要",
+  todos: "DeepSeek 正在找待办",
+};
+
+export const SCENE_NAME: Record<Scene, string> = { "in-person": "面对面", online: "线上" };
+
 export type Processor = {
   /** Processes a meeting once per run of the app: a new one, or one interrupted by quitting. */
   start: (meetingId: string) => void;
   /** Runs again after an error, or regenerates the minutes from the transcript. */
   retry: (meetingId: string) => void;
+  /** Transcribes again as an in-person or online meeting (with this many people, if given), then writes the minutes again. */
+  rediarize: (meetingId: string, hints: TranscribeHints) => void;
   download: () => Promise<void>;
   refreshModels: () => Promise<ModelsStatus | null>;
 };
@@ -80,18 +96,19 @@ export function createProcessor({ get, dispatch }: { get: () => State; dispatch:
     return status;
   }
 
-  async function run(id: string) {
+  async function run(id: string, hints?: TranscribeHints) {
     if (running.has(id)) return;
     const before = find(id);
     if (!before) return;
     running.add(id);
     let step: JobStep = "transcribe";
+    let transcribed = false;
     try {
       dispatch({ type: "patchMeeting", id, patch: { status: "transcribing" } });
 
       // State read through get() lags a dispatch until React renders, so the meeting travels along here.
       let meeting = before;
-      if (!meeting.transcript) {
+      if (!meeting.transcript || hints) {
         const models = await transcribeModels();
         dispatch({ type: "models", status: models });
         if (!models?.ready) {
@@ -100,9 +117,10 @@ export function createProcessor({ get, dispatch }: { get: () => State; dispatch:
         }
         setJob(id, { step, stage: "prepare", progress: 0 });
         const progress = throttle((stage: TranscribeStage, p: number) => setJob(id, { step: "transcribe", stage, progress: p }));
-        const transcript = claimMic(await transcribe(id, progress), get().me);
+        const transcript = claimMic(await transcribe(id, progress, hints), get().me);
         dispatch({ type: "transcript", meetingId: id, transcript });
         meeting = { ...meeting, transcript };
+        transcribed = true;
       }
 
       if (!meeting.transcript?.segments.length) {
@@ -127,7 +145,8 @@ export function createProcessor({ get, dispatch }: { get: () => State; dispatch:
       if (!titled) dispatch({ type: "patchMeeting", id, patch: { title: result.minutes.title } });
       setJob(id, null);
       const drafts = result.todos.length;
-      toast(`「${titled ?? result.minutes.title}」的纪要已生成${drafts ? `，有 ${drafts} 项待办等你确认` : ""}。`, "success");
+      if (hints) toast(`已按${SCENE_NAME[hints.scene]}会议${hints.speakers ? `、${hints.speakers} 人` : ""}重新区分说话人，纪要和待办草稿也已更新。`, "success");
+      else toast(`「${titled ?? result.minutes.title}」的纪要已生成${drafts ? `，有 ${drafts} 项待办等你确认` : ""}。`, "success");
     } catch (e) {
       if (e instanceof ModelsMissing) {
         void refreshModels();
@@ -138,7 +157,9 @@ export function createProcessor({ get, dispatch }: { get: () => State; dispatch:
       if (before.minutes) {
         dispatch({ type: "patchMeeting", id, patch: { status: before.status } });
         setJob(id, null);
-        toast(`重新生成失败：${message(e)}`, "error");
+        if (!hints) toast(`重新生成失败：${message(e)}`, "error");
+        else if (!transcribed) toast(`重新区分说话人失败：${message(e)}`, "error");
+        else toast(`说话人已重新区分，但纪要没能更新：${message(e).replace(/。$/, "")}。可以在「纪要」里点「重新生成」再试。`, "error");
       } else {
         dispatch({ type: "patchMeeting", id, patch: { status: "failed" } });
         setJob(id, { step, progress: 0, error: message(e) });
@@ -177,12 +198,17 @@ export function createProcessor({ get, dispatch }: { get: () => State; dispatch:
       setJob(id, null);
       void run(id);
     },
+    rediarize: (id, hints) => {
+      started.add(id);
+      setJob(id, null);
+      void run(id, hints);
+    },
     download,
     refreshModels,
   };
 }
 
-async function transcribe(id: string, progress: (stage: TranscribeStage, p: number) => void): Promise<Transcript> {
+async function transcribe(id: string, progress: (stage: TranscribeStage, p: number) => void, hints?: TranscribeHints): Promise<Transcript> {
   let settle!: { resolve: (t: Transcript) => void; reject: (e: Error) => void };
   const done = new Promise<Transcript>((resolve, reject) => (settle = { resolve, reject }));
   const stop = await onTranscribe((event) => {
@@ -192,14 +218,14 @@ async function transcribe(id: string, progress: (stage: TranscribeStage, p: numb
     else progress(event.stage, event.progress);
   });
   try {
-    await transcribeStart(id);
+    await transcribeStart(id, hints);
     return await done;
   } finally {
     stop();
   }
 }
 
-/** The microphone is the person recording: speaker S1 is 「我」. */
+/** The voice the transcriber took for the person recording (S1 「我」) is linked to them. */
 function claimMic(transcript: Transcript, me: string): Transcript {
   return {
     ...transcript,

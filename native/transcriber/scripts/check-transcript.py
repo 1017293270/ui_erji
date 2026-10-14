@@ -28,7 +28,8 @@ def check(ok, message):
 
 
 # Shape: packages/shared/src/meeting.ts
-check(set(t) == {"meetingId", "language", "speakers", "segments"}, f"top-level keys: {sorted(t)}")
+check(set(t) == {"meetingId", "language", "scene", "speakers", "segments"}, f"top-level keys: {sorted(t)}")
+check(t.get("scene") in ("in-person", "online"), f"scene {t.get('scene')!r}")
 check(t.get("meetingId") == fixture.name, f"meetingId {t.get('meetingId')!r} != folder name {fixture.name!r}")
 check(t.get("language") == "zh", "language should be zh")
 speakers = {s["id"]: s for s in t["speakers"]}
@@ -36,10 +37,11 @@ for s in t["speakers"]:
     check(set(s) <= {"id", "label", "track", "personId", "source", "confidence"} and {"id", "label", "track", "personId", "source"} <= set(s), f"speaker keys {sorted(s)}")
     check(re.fullmatch(r"S\d+", s["id"]) is not None, f"speaker id {s['id']}")
     check(s["personId"] is None, "personId should be null")
-    if s["id"] == "S1":
-        check((s["label"], s["track"], s["source"]) == ("我", "mic", "self"), f"S1 is {s}")
+    if s["source"] == "self":
+        check((s["id"], s["label"], s["track"]) == ("S1", "我", "mic"), f"the person recording is {s}")
     else:
-        check(s["track"] == "system" and s["source"] == "unknown" and s["label"] == f"说话人 {s['id'][1:]}", f"remote speaker {s}")
+        check(s["source"] == "unknown" and s["label"] == f"说话人 {s['id'][1:]}", f"diarized speaker {s}")
+        check(s["track"] == "system" or t.get("scene") == "in-person", f"mic speaker {s} outside an in-person meeting")
 previous = -1
 for i, seg in enumerate(t["segments"], start=1):
     check(set(seg) == {"id", "speakerId", "track", "start", "end", "text"}, f"segment keys {sorted(seg)}")
@@ -51,7 +53,7 @@ for i, seg in enumerate(t["segments"], start=1):
     check(seg["text"].strip() != "", f"{seg['id']}: empty text")
     previous = seg["start"]
 used = {seg["speakerId"] for seg in t["segments"]}
-check(all(s == "S1" or s in used for s in speakers), "a remote speaker has no segments")
+check(all(speakers[s]["source"] == "self" or s in used for s in speakers), "a diarized speaker has no segments")
 
 
 def norm(text):
@@ -91,15 +93,15 @@ for s in t["segments"]:
 for voice, (ref, hyp) in sorted(by_voice.items()):
     print(f"  {voice:40} CER {edits(ref, hyp) / max(1, len(ref)):6.2%}")
 
-# Diarization: milliseconds of each system voice under each speaker id.
+# Diarization: milliseconds of each voice under each diarized speaker id, on its own track.
 matrix = defaultdict(lambda: defaultdict(int))
 for s in t["segments"]:
-    if s["track"] != "system":
+    if speakers[s["speakerId"]]["source"] == "self":
         continue
     for u in utterances:
-        if u["track"] == "system":
+        if u["track"] == s["track"]:
             matrix[u["voice"]][s["speakerId"]] += overlap(u, s)
-print("system voices -> speaker ids (seconds of overlap):")
+print("voices -> diarized speaker ids (seconds of overlap):")
 for voice, ids in sorted(matrix.items()):
     print(f"  {voice:40} " + ", ".join(f"{k}: {v / 1000:.1f}" for k, v in sorted(ids.items())))
 total = sum(v for ids in matrix.values() for v in ids.values())
@@ -109,7 +111,7 @@ for voice, ids in matrix.items():
     for k, v in ids.items():
         per_id[k][voice] += v
 pure = sum(max(v.values()) for v in per_id.values())
-print(f"diarization purity {pure / max(1, total):.1%}, {len(per_id)} system ids for {len(matrix)} voices")
+print(f"diarization purity {pure / max(1, total):.1%}, {len(per_id)} ids for {len(matrix)} voices")
 
 # Timing: utterances that start a segment, against where they were placed.
 deltas = []

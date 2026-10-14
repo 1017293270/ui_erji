@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
-use echomind_transcriber::{model_status, transcribe};
+use echomind_transcriber::{model_status, transcribe, Hints, Scene};
 use serde_json::Value;
 
 fn models_dir() -> PathBuf {
@@ -44,10 +44,10 @@ fn read_json(path: &Path) -> Value {
     serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
 }
 
-fn run(dir: &Path) -> Value {
+fn run(dir: &Path, hints: Hints) -> Value {
     let models = models_dir();
     assert!(model_status(&models).ready, "models not downloaded: cargo run --release -- download");
-    let transcript = transcribe(dir, &models, &AtomicBool::new(false), |_, _| {}).unwrap_or_else(|e| panic!("{e}"));
+    let transcript = transcribe(dir, &models, hints, &AtomicBool::new(false), |_, _| {}).unwrap_or_else(|e| panic!("{e}"));
     serde_json::to_value(&transcript).unwrap()
 }
 
@@ -85,20 +85,22 @@ fn track_cer(utterances: &[Value], segments: &[Value], track: &str) -> f64 {
 }
 
 /// The contract in packages/shared/src/meeting.ts.
-fn check_shape(t: &Value, meeting_id: &str) {
+fn check_shape(t: &Value, meeting_id: &str, scene: &str) {
     let keys: Vec<&str> = t.as_object().unwrap().keys().map(String::as_str).collect();
-    assert_eq!(keys.len(), 4, "top-level keys {keys:?}");
+    assert_eq!(keys.len(), 5, "top-level keys {keys:?}");
     assert_eq!(t["meetingId"], meeting_id);
     assert_eq!(t["language"], "zh");
+    assert_eq!(t["scene"], scene);
     let speakers = t["speakers"].as_array().unwrap();
-    let s1 = &speakers[0];
-    assert_eq!((&s1["id"], &s1["label"], &s1["track"], &s1["source"]), (&"S1".into(), &"我".into(), &"mic".into(), &"self".into()));
-    for (n, s) in speakers.iter().enumerate().skip(1) {
+    for (n, s) in speakers.iter().enumerate() {
         assert_eq!(s["id"], format!("S{}", n + 1));
-        assert_eq!(s["label"], format!("说话人 {}", n + 1));
-        assert_eq!((&s["track"], &s["source"]), (&"system".into(), &"unknown".into()));
-    }
-    for s in speakers {
+        if s["source"] == "self" {
+            assert_eq!(n, 0, "only S1 can be the person recording: {s}");
+            assert_eq!((&s["label"], &s["track"]), (&"我".into(), &"mic".into()));
+        } else {
+            assert_eq!(s["label"], format!("说话人 {}", n + 1));
+            assert_eq!(s["source"], "unknown");
+        }
         assert!(s["personId"].is_null(), "personId must be present and null: {s}");
     }
     let mut previous = 0;
@@ -115,27 +117,18 @@ fn check_shape(t: &Value, meeting_id: &str) {
     }
 }
 
-#[test]
-#[ignore = "needs the downloaded models and macOS `say`"]
-fn two_remote_voices_and_a_pause() {
-    let dir = fixture("rec-default", &[]);
-    let t = run(&dir);
-    check_shape(&t, "rec-default");
-    let utterances = read_json(&dir.join("expected.json"))["utterances"].as_array().unwrap().clone();
-    let segments = t["segments"].as_array().unwrap();
+const ROOM_VOICES: &str = "Tingting,Eddy (Chinese (China mainland)),Grandma (Chinese (China mainland))";
 
-    let mic = track_cer(&utterances, segments, "mic");
-    let system = track_cer(&utterances, segments, "system");
-    println!("CER mic {mic:.3}, system {system:.3}");
-    // System is the robotic Eddy voice half the time (~14% alone); Meijia is ~1%.
-    assert!(mic < 0.03 && system < 0.12, "CER mic {mic:.3}, system {system:.3}");
+fn ids(t: &Value) -> Vec<&str> {
+    t["speakers"].as_array().unwrap().iter().map(|s| s["id"].as_str().unwrap()).collect()
+}
 
-    // Each remote voice lands on its own id, and nearly all of its speech there.
-    let ids: Vec<&Value> = t["speakers"].as_array().unwrap().iter().map(|s| &s["id"]).collect();
-    assert_eq!(ids, ["S1", "S2", "S3"], "speakers {ids:?}");
+/// On one track: how many ids the voices mostly landed on, and the share of speech that
+/// went to each voice's own id.
+fn purity(utterances: &[Value], segments: &[Value], track: &str) -> (usize, f64) {
     let mut seconds: HashMap<(&str, &str), i64> = HashMap::new();
-    for u in utterances.iter().filter(|u| u["track"] == "system") {
-        for s in segments.iter().filter(|s| s["track"] == "system") {
+    for u in utterances.iter().filter(|u| u["track"] == track) {
+        for s in segments.iter().filter(|s| s["track"] == track) {
             *seconds.entry((u["voice"].as_str().unwrap(), s["speakerId"].as_str().unwrap())).or_default() += overlap(u, s);
         }
     }
@@ -149,10 +142,32 @@ fn two_remote_voices_and_a_pause() {
     let mut owners: Vec<&str> = best.values().map(|&(id, _)| id).collect();
     owners.sort();
     owners.dedup();
-    assert_eq!(owners.len(), 2, "both voices went to the same id: {seconds:?}");
     let total: i64 = seconds.values().sum();
     let pure: i64 = best.values().map(|&(_, n)| n).sum();
-    assert!(pure as f64 >= 0.95 * total as f64, "diarization purity {:.3}", pure as f64 / total as f64);
+    (owners.len(), pure as f64 / total.max(1) as f64)
+}
+
+#[test]
+#[ignore = "needs the downloaded models and macOS `say`"]
+fn two_remote_voices_and_a_pause() {
+    let dir = fixture("rec-default", &[]);
+    let t = run(&dir, Hints { scene: Some(Scene::Online), people: None });
+    check_shape(&t, "rec-default", "online");
+    let utterances = read_json(&dir.join("expected.json"))["utterances"].as_array().unwrap().clone();
+    let segments = t["segments"].as_array().unwrap();
+
+    let mic = track_cer(&utterances, segments, "mic");
+    let system = track_cer(&utterances, segments, "system");
+    println!("CER mic {mic:.3}, system {system:.3}");
+    // System is the robotic Eddy voice half the time (~14% alone); Meijia is ~1%.
+    assert!(mic < 0.03 && system < 0.12, "CER mic {mic:.3}, system {system:.3}");
+
+    // Each remote voice lands on its own id, and nearly all of its speech there.
+    assert_eq!(ids(&t), ["S1", "S2", "S3"]);
+    assert_eq!(t["speakers"][0]["source"], "self");
+    let (owners, pure) = purity(&utterances, segments, "system");
+    assert_eq!(owners, 2, "both voices went to the same id");
+    assert!(pure >= 0.95, "diarization purity {pure:.3}");
 
     // Times are on the recording's clock, the 10 s pause included.
     let paused = &read_json(&dir.join("manifest.json"))["paused"][0];
@@ -178,8 +193,8 @@ fn two_remote_voices_and_a_pause() {
 #[ignore = "needs the downloaded models and macOS `say`"]
 fn echo_from_speakers_is_dropped() {
     let dir = fixture("rec-echo", &["--echo"]);
-    let t = run(&dir);
-    check_shape(&t, "rec-echo");
+    let t = run(&dir, Hints { scene: Some(Scene::Online), people: None });
+    check_shape(&t, "rec-echo", "online");
     let utterances = read_json(&dir.join("expected.json"))["utterances"].as_array().unwrap().clone();
     let segments = t["segments"].as_array().unwrap();
 
@@ -190,5 +205,66 @@ fn echo_from_speakers_is_dropped() {
         .filter(|s| s["track"] == "mic" && !utterances.iter().any(|u| u["track"] == "mic" && overlap(u, s) > 0))
         .collect();
     assert!(leaked.is_empty(), "echo kept as the user's speech: {leaked:?}");
+    cleanup(&dir);
+}
+
+#[test]
+#[ignore = "needs the downloaded models and macOS `say`"]
+fn three_people_around_a_table() {
+    // Not Meijia: next to Tingting the voiceprint model hears one person (see the README).
+    let dir = fixture("rec-room", &["--in-person", "--voices", ROOM_VOICES]);
+    // Nothing comes from the computer, so the scene is judged to be in person.
+    let t = run(&dir, Hints::default());
+    check_shape(&t, "rec-room", "in-person");
+    let utterances = read_json(&dir.join("expected.json"))["utterances"].as_array().unwrap().clone();
+    let segments = t["segments"].as_array().unwrap();
+
+    let mic = track_cer(&utterances, segments, "mic");
+    println!("CER {mic:.3}");
+    assert!(mic < 0.12, "CER {mic:.3}");
+    assert_eq!(ids(&t), ["S1", "S2", "S3"]);
+    assert!(t["speakers"].as_array().unwrap().iter().all(|s| s["source"] == "unknown" && s["track"] == "mic"));
+    let (owners, pure) = purity(&utterances, segments, "mic");
+    assert_eq!(owners, 3, "two voices went to the same id");
+    assert!(pure >= 0.9, "diarization purity {pure:.3}");
+    cleanup(&dir);
+}
+
+#[test]
+#[ignore = "needs the downloaded models and macOS `say`"]
+fn the_number_of_people_splits_voices_found_as_one() {
+    // On their own, Tingting and Sandy come out as one voice.
+    let voices = "Tingting,Eddy (Chinese (China mainland)),Sandy (Chinese (China mainland))";
+    let dir = fixture("rec-room-count", &["--in-person", "--voices", voices]);
+    let t = run(&dir, Hints { scene: None, people: Some(3) });
+    check_shape(&t, "rec-room-count", "in-person");
+    let utterances = read_json(&dir.join("expected.json"))["utterances"].as_array().unwrap().clone();
+    let segments = t["segments"].as_array().unwrap();
+
+    assert_eq!(ids(&t), ["S1", "S2", "S3"]);
+    let (owners, pure) = purity(&utterances, segments, "mic");
+    assert_eq!(owners, 3, "two voices went to the same id");
+    assert!(pure >= 0.8, "diarization purity {pure:.3}");
+    cleanup(&dir);
+}
+
+#[test]
+#[ignore = "needs the downloaded models and macOS `say`"]
+fn a_call_taken_for_a_room_still_has_one_voice_as_me() {
+    let dir = fixture("rec-call", &["--echo"]);
+    let t = run(&dir, Hints { scene: Some(Scene::InPerson), people: None });
+    check_shape(&t, "rec-call", "in-person");
+    let utterances = read_json(&dir.join("expected.json"))["utterances"].as_array().unwrap().clone();
+    let segments = t["segments"].as_array().unwrap();
+
+    assert_eq!(ids(&t), ["S1", "S2", "S3"]);
+    assert_eq!(t["speakers"][0]["source"], "self");
+    let mic = track_cer(&utterances, segments, "mic");
+    assert!(mic < 0.03, "CER mic {mic:.3}");
+    let leaked = segments
+        .iter()
+        .filter(|s| s["track"] == "mic" && !utterances.iter().any(|u| u["track"] == "mic" && overlap(u, s) > 0))
+        .count();
+    assert_eq!(leaked, 0, "echo kept as the user's speech");
     cleanup(&dir);
 }

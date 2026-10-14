@@ -2,16 +2,20 @@
 
 把 echomind-capture 录下的会议文件夹转成 `Transcript`（`packages/shared/src/meeting.ts` 里的结构）。全部在用户电脑上用 CPU 跑，音频不出本机，只有转写出的文字之后才交给 DeepSeek。
 
-- **mic 轨** = 录音的人自己：说话人 `S1`（`label: "我"`，`source: "self"`）。
-- **system 轨** = 电脑播放出来的所有人：做说话人分离，按第一次出现的顺序编号 `S2、S3…`（`说话人 2`…，`source: "unknown"`）。
+会议分两种场景（`Transcript.scene`），区别在 mic 轨里是谁：
+
+- **线上会议**（`online`）：mic 轨 = 录音的人自己，说话人 `S1`（`label: "我"`，`source: "self"`）；system 轨 = 电脑播放出来的所有人，做说话人分离，按第一次出现的顺序编号 `S2、S3…`（`说话人 2`…，`source: "unknown"`）。
+- **面对面**（`in-person`）：大家围着一台电脑开会，所有人都在 mic 轨里。mic 轨也做说话人分离，所有声音按第一次出现的顺序编号 `S1、S2…`（`说话人 1`…）。如果 mic 轨只分出一个声音，它仍然是 `S1`「我」。system 轨有人说话时（比如还有人远程接入）照样分离，编号接在后面。
+- 不指定时按录音判断：system 轨的说话时长 ≥ 60 秒、且至少是 mic 轨的四分之一，算线上会议，否则算面对面。判断偏向面对面：把线上会议当成面对面，mic 轨里只有一个声音，结果仍是「我」；反过来把面对面当成线上会议，现场所有人都会被算成「我」。App 里可以手动改场景、指定人数后重新区分。
 - 时间是从开始录音算起的毫秒，暂停留下的空档原样保留，不平移。
 
 ## 流程
 
 1. **prepare**：读 `manifest.json`，把每条轨的 `mic-NNNN.wav` / `system-NNNN.wav` 按 `startMs` 放回时间轴（暂停处是空档；某条轨缺失就跳过；manifest 缺失或录音中途崩溃时按文件编号兜底）。非 16 kHz 单声道的 WAV 先转成临时文件。逐个校验模型文件的 sha256（约 0.2 秒）。
 2. **speech**：Silero VAD 流式扫两条轨，得到说话的区间。内存不随会议长度增长。
-3. **speakers**：system 轨去掉静音后，每 10 分钟语音为一块交给 sherpa-onnx 的说话人分离（pyannote segmentation 3.0 + CAM++ 声纹）。每块里的每个说话人再取最多 60 秒干净语音算一个声纹，跨块用平均链接聚类，所以 2 小时会议里同一个人的编号保持一致，而内存只占一块（约 40 MB 音频）。同一块里分离器已经分开的两个人，只有声纹非常接近（≥ 0.7）才会被合并。
-4. **text**：mic 轨按 VAD 切段；system 轨按说话人分段，再在停顿处切开，每段不超过 20 秒。SenseVoice 逐段识别，自带标点和数字规整（ITN）。丢掉空段和纯语气词（嗯、啊…）。
+3. **speakers**：要分离的轨（system 轨；面对面时还有 mic 轨）去掉静音后，每 10 分钟语音为一块交给 sherpa-onnx 的说话人分离（pyannote segmentation 3.0 + CAM++ 声纹）。每块里的每个说话人再取最多 60 秒干净语音算一个声纹，跨块用平均链接聚类，所以 2 小时会议里同一个人的编号保持一致，而内存只占一块（约 40 MB 音频）。同一块里分离器已经分开的两个人，只有声纹非常接近（≥ 0.7）才会被合并。
+   - **指定了人数**（`--speakers N`）时，块内分得更细（聚类阈值 0.4，不指定时 0.5），跨块再按声纹把最接近的合并，直到剩 N 个。没有直接让分离器分成 N 类：两人同时说话的窗口会自成一类，反而把两个真实的人挤成一个。人数只对场景关心的那条轨生效：面对面是 mic 轨（包括你），线上是 system 轨（不包括你）。
+4. **text**：线上会议的 mic 轨按 VAD 切段；分离过的轨按说话人分段，再在停顿处切开，每段不超过 20 秒。SenseVoice 逐段识别，自带标点和数字规整（ITN）。丢掉空段和纯语气词（嗯、啊…）。
    - **回声**：不戴耳机时麦克风会录到扬声器里对方的声音。mic 轨会在 system 轨有人说话的边界处切开，凡是录在对方说话期间、且文字和 system 轨同时段内容大部分重复（最长公共子序列 ≥ 60%）的 mic 段，当作回声丢掉；用户自己的话不受影响。
 5. 两条轨合并，按开始时间排序，编号 `seg-0001…`。
 
@@ -66,7 +70,10 @@ cargo build --release
 ./target/release/echomind-transcribe models                 # 模型状态（JSON）
 ./target/release/echomind-transcribe download               # 下载缺的模型，断点续传；Ctrl-C 取消
 ./target/release/echomind-transcribe run <录音文件夹> --out transcript.json
+./target/release/echomind-transcribe run <录音文件夹> --scene in-person --speakers 3 --out transcript.json
 ```
+
+- `--scene in-person|online` 指定场景，`--speakers N` 指定有几个人说话（面对面时包括你，线上时不包括你）；不写就按录音判断。
 
 - 模型目录默认就是 App 用的 `~/Library/Application Support/com.evanbyte.echomind/models/`，可以用 `--models-dir` 或 `ECHOMIND_MODELS_DIR` 改。
 - `ECHOMIND_MODEL_MIRROR=<镜像地址>` 替换 `https://github.com/k2-fsa/sherpa-onnx/releases/download`，镜像要提供同样的 `<tag>/<文件名>` 路径；sha256 照样校验。
@@ -87,9 +94,11 @@ cargo build --release
 ```rust
 pub fn model_status(models_dir: &Path) -> ModelStatus;
 pub fn download_models(models_dir: &Path, cancel: &AtomicBool, on_progress: impl FnMut(u64, u64)) -> Result<(), Error>;
-pub fn transcribe(recording_dir: &Path, models_dir: &Path, cancel: &AtomicBool,
+pub fn transcribe(recording_dir: &Path, models_dir: &Path, hints: Hints, cancel: &AtomicBool,
                   on_progress: impl FnMut(Stage, f32)) -> Result<Transcript, Error>;
 ```
+
+`Hints { scene, people }` 是用户告诉的场景和人数，`Hints::default()` 表示都按录音判断。
 
 - `ModelStatus` 序列化后就是 `transcribe_models` 的返回值；`download_models` 的回调直接转成 `transcribe://download { received, total }`；`Transcript` 序列化后符合 shared 的 schema，写到 `recordings/<id>/transcript.json`。
 - `Stage::as_str()` 是事件里的 `stage`。**每个阶段的 progress 各自从 0 走到 1**，UI 要显示一根总进度条可以按耗时加权（2 小时会议实测）：speech 7%、speakers 31%、text 62%，prepare 可忽略。
@@ -105,6 +114,8 @@ pub fn transcribe(recording_dir: &Path, models_dir: &Path, cancel: &AtomicBool,
 ```bash
 scripts/make-fixture.sh /tmp/echomind-fx/rec-test                 # 约 2.5 分钟：mic=Tingting，system=Eddy（男）+ Meijia（女）
 scripts/make-fixture.sh /tmp/echomind-fx/rec-echo --echo          # 把 system 轨以 -12 dB、80 ms 延迟漏进 mic，模拟外放
+scripts/make-fixture.sh /tmp/echomind-fx/rec-room --in-person \
+  --voices "Tingting,Eddy (Chinese (China mainland)),Grandma (Chinese (China mainland))"   # 三个人都在 mic 轨，面对面
 scripts/make-fixture.sh /tmp/echomind-fx/rec-2h --repeat 50       # 会议重复 50 遍，约 2 小时，测跨块、速度和内存
 cargo run --release --bin echomind-transcribe -- run /tmp/echomind-fx/rec-test --out /tmp/echomind-fx/rec-test.json
 python3 scripts/check-transcript.py /tmp/echomind-fx/rec-test /tmp/echomind-fx/rec-test.json
@@ -121,12 +132,25 @@ fixture 按 echomind-capture 的格式生成：60 秒一个分段文件，中间
 | 默认（Tingting / Eddy+Meijia） | 2.5 分钟 | 0% / 6.9% | 2 个声音 → S2、S3，纯度 100% | 平均 −4 ms，最大 98 ms | 10.5 s / 0.070 |
 | `--echo` 外放回声 | 2.5 分钟 | 0% / 6.9%，没有回声被当成“我” | 同上 | 平均 −10 ms，最大 98 ms | 13.7 s / 0.092 |
 | `--repeat 50` | 2 小时 1 分 | 0% / 5.9% | 7 块共 14 个块内说话人，跨块正确连成 S2、S3，纯度 100% | 平均 −11 ms，95% 在 89 ms 内 | 532 s / 0.073，峰值内存 545 MB |
+| `--in-person`（Tingting / Eddy / Grandma），`--repeat 6` | 14 分钟 | mic 9.8%（Tingting 0.1%，Eddy 12%、Grandma 18%） | 自动：3 人，纯度 95.5%；`--speakers 3`：96.4%（两块，跨块连接正确） | 平均 −98 ms | 98 s / 0.11，峰值内存 640 MB |
+
+面对面场景换不同的第三个声音（Tingting + Eddy + 第三人）测的说话人分离：
+
+| 第三人 | 自动 | `--speakers 3` |
+| --- | --- | --- |
+| Grandpa / Grandma / Rocko / Shelley | 3 人，纯度 89–97% | 3 人，纯度 87–97% |
+| Sandy | 2 人（和 Tingting 并成一个） | 3 人，纯度 86% |
+| Meijia | 2 人（和 Tingting 并成一个） | 仍和 Tingting 在一起 |
+| Reed（第二人换成 Eddy） | Eddy 和 Reed 并成一个 | 仍然并在一起 |
+
+指定人数时块内的聚类阈值试过 0.5、0.45、0.4、0.35、0.3：0.4 能分开 Sandy，其他组不变差；再低 Flo、Shelley、Reed 反而变差。
 
 system 轨的错字几乎都来自 Eddy：macOS 的 Eddy/Shelley/Flo 等是机械感很重的合成音，SenseVoice 对 Meijia、Tingting 这类自然音色的字错率是 0–0.6%。
 
 ## 已知限制
 
-- **相似的声音会被并成一个人**。Tingting 和 Meijia 两个女声在所有声纹模型下的相似度都有 0.6–0.74（真实的不同人通常低于 0.3–0.4），pyannote 在 10 秒窗口里分不开，所以 system 轨用这两个声音时只得到一个编号。没有为这种情况调阈值：调到能分开它们，会把真实会议里同一个人切成好几个编号。阈值需要用真实会议录音再校准（`speakers.rs` 顶部的常量）。之后可以让 App 传入参会人数（飞书日程里的人数）作为说话人数的上限。
+- **相似的声音会被并成一个人**。Tingting 和 Meijia 两个女声在所有声纹模型下的相似度都有 0.6–0.74（真实的不同人通常低于 0.3–0.4），pyannote 在 10 秒窗口里分不开，所以用这两个声音时只得到一个编号；同一个合成引擎的 Eddy 和 Reed 也是这样。自动模式没有为这种情况调低阈值：调到能分开它们，会把真实会议里同一个人切成好几个编号。用户在 App 里选了实际人数（`--speakers`）时会分得更细，能分开一部分（Sandy），声纹模型本身听不出差别的（Meijia、Reed）仍然分不开。阈值都只用合成声音测过，需要用真实会议录音再校准（`speakers.rs` 顶部的常量）。
+- **面对面的效果只用合成声音测过**：真实会议室里离电脑远近不同、有混响，声纹会更不稳定。第一次真机试用时留意说话人有没有被拆开或合并。
 - **同时说话**：重叠的部分归给先开口的人，后插话的人在重叠里的话只会出现在前者那段里（或丢失）。
 - **回声**只按“和对方同时说的内容大部分重复”来判断：用户和对方同时说话、又开着外放时，用户那段可能混入回声文字。最好的办法仍然是戴耳机；以后可以用 system 轨做参考信号做真正的回声消除。
 - 2 小时会议在 M1 Pro 上约 9 分钟（speech 39 s、speakers 164 s、text 329 s）。单线程 RTF 约 0.18，四核的 Windows 笔记本预计 RTF 0.15–0.3，也就是 2 小时会议要 20–35 分钟。
