@@ -12,6 +12,7 @@ describe("loadConfig", () => {
       host: "0.0.0.0",
       tls: null,
       feishu: null,
+      admins: [],
       deepseek: { apiKey: null, baseUrl: "https://api.deepseek.com", model: "deepseek-flash" },
       dataKey: null,
     });
@@ -30,6 +31,7 @@ describe("loadConfig", () => {
       DEEPSEEK_API_KEY: "sk",
       DEEPSEEK_BASE_URL: "https://example.test/v1/",
       ECHOMIND_DATA_KEY: key,
+      ECHOMIND_ADMINS: "ou_a, ou_b",
     });
     expect(config.production).toBe(true);
     expect(config.port).toBe(9443);
@@ -37,6 +39,7 @@ describe("loadConfig", () => {
     expect(config.feishu).toEqual({ appId: "cli_x", appSecret: "s" });
     expect(config.deepseek).toEqual({ apiKey: "sk", baseUrl: "https://example.test/v1", model: "deepseek-flash" });
     expect(config.dataKey?.length).toBe(32);
+    expect(config.admins).toEqual(["ou_a", "ou_b"]);
   });
 
   it("says which setting is wrong without echoing values", () => {

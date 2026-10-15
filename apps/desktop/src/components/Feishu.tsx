@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { cn } from "@echomind/ui";
-import { feishuCancel, feishuLogin, feishuLogout, feishuStatus, type FeishuProfile } from "../lib/native";
+import { feishuCancel, feishuForgetCompany, feishuLogin, feishuLogout, feishuStatus, type FeishuProfile } from "../lib/native";
 import { useStore } from "../lib/store";
 
 /**
@@ -13,12 +13,13 @@ export function useFeishuLogin() {
   const [error, setError] = useState<string | null>(null);
   const cancelled = useRef(false);
 
-  const login = async (): Promise<FeishuProfile | null> => {
+  /** `joinCode` picks the company; without it, the one this computer signed in to last. */
+  const login = async (joinCode?: string): Promise<FeishuProfile | null> => {
     cancelled.current = false;
     setBusy(true);
     setError(null);
     try {
-      const user = await feishuLogin();
+      const user = await feishuLogin(joinCode);
       // Ask again rather than patching in the user: a fresh sign-in also changes which scopes are missing.
       const status = await feishuStatus().catch(() => null);
       if (status) store.dispatch({ type: "feishu", status });
@@ -44,7 +45,40 @@ export function useFeishuLogin() {
     store.toast("已退出飞书登录");
   };
 
-  return { busy, error, login, cancel, logout };
+  /** Forgets the company, so the next sign-in asks for a join code. */
+  const switchCompany = async () => {
+    await feishuForgetCompany();
+    setError(null);
+    if (store.feishu) store.dispatch({ type: "feishu", status: { ...store.feishu, company: null } });
+  };
+
+  return { busy, error, login, cancel, logout, switchCompany };
+}
+
+/** Enough characters for a join code; spaces and dashes do not count. */
+export const joinCodeReady = (code: string) => code.replace(/[\s-]/g, "").length >= 6;
+
+/** The company's join code, as its EchoMind admin hands it out: six letters and digits. */
+export function JoinCodeInput({ value, onChange, onEnter, className }: { value: string; onChange: (code: string) => void; onEnter?: () => void; className?: string }) {
+  return (
+    <input
+      value={value}
+      onChange={(e) => onChange(e.target.value.toUpperCase())}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") onEnter?.();
+      }}
+      placeholder="公司加入码"
+      aria-label="公司加入码"
+      maxLength={12}
+      autoComplete="off"
+      autoCapitalize="characters"
+      spellCheck={false}
+      className={cn(
+        "no-drag h-9 rounded-[10px] border border-border bg-card px-3 font-mono text-[14px] tracking-[0.16em] outline-none placeholder:font-sans placeholder:tracking-normal placeholder:text-subtle focus:border-ring",
+        className,
+      )}
+    />
+  );
 }
 
 /** The 飞书 avatar, or the first character of the name on a warm disc. */

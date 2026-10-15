@@ -1,7 +1,8 @@
-//! The EchoMind server (apps/server). It holds the Feishu App Secret, people's Feishu tokens and
-//! the DeepSeek key, so the app carries no secrets: sign-in still opens the browser and catches
-//! Feishu's code on the loopback address (feishu.rs), and the server turns that code into an
-//! EchoMind session, kept in server-session.json.
+//! The EchoMind server (apps/server). It holds each company's Feishu App Secret, people's Feishu
+//! tokens and the DeepSeek key, so the app carries no secrets: sign-in still opens the browser and
+//! catches Feishu's code on the loopback address (feishu.rs), and the server turns that code into
+//! an EchoMind session, kept in server-session.json. Which company to sign in to comes from its
+//! join code, typed once and kept in server-company.json.
 //!
 //! Only EchoMind's own CA (certs/echomind-ca.pem) is trusted for the server, so no other
 //! certificate, however valid, can stand in for it. The endpoints are in docs/server-phase1.md.
@@ -56,6 +57,17 @@ struct Session {
     profile: Profile,
     #[serde(default)]
     missing_scopes: Vec<String>,
+    /// May manage companies; the server checks again on every call.
+    #[serde(default)]
+    admin: bool,
+}
+
+/// The company this computer signs in to. Kept after signing out, so the join code is typed once.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Company {
+    join_code: String,
+    name: Option<String>,
 }
 
 fn session_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -74,6 +86,33 @@ fn save(app: &AppHandle, session: &Session) -> Result<(), String> {
 
 fn forget(app: &AppHandle) {
     if let Ok(path) = session_path(app) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn company_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(storage::data_dir(app)?.join("server-company.json"))
+}
+
+fn load_company(app: &AppHandle) -> Option<Company> {
+    serde_json::from_slice(&std::fs::read(company_path(app).ok()?).ok()?).ok()
+}
+
+/// What the server said about a company (`{ name, joinCode }`), saved when it changed.
+fn remember_company(app: &AppHandle, value: &Value) {
+    let Some(join_code) = value["joinCode"].as_str().filter(|c| !c.is_empty()) else { return };
+    let company = Company { join_code: join_code.into(), name: value["name"].as_str().map(String::from) };
+    if load_company(app).as_ref() == Some(&company) {
+        return;
+    }
+    if let (Ok(path), Ok(text)) = (company_path(app), serde_json::to_vec(&company)) {
+        let _ = storage::write_private(&path, &text);
+    }
+}
+
+/// Signs in to another company next time.
+pub fn forget_company(app: &AppHandle) {
+    if let Ok(path) = company_path(app) {
         let _ = std::fs::remove_file(path);
     }
 }
@@ -194,6 +233,8 @@ struct SignedIn {
     profile: ServerProfile,
     #[serde(default)]
     missing_scopes: Vec<String>,
+    #[serde(default)]
+    company: Value,
 }
 
 #[derive(Deserialize)]
@@ -217,19 +258,29 @@ fn device() -> String {
     format!("EchoMind {} · {}", env!("CARGO_PKG_VERSION"), std::env::consts::OS)
 }
 
-pub async fn login(app: &AppHandle) -> Result<Profile, String> {
+/// Signs in to the company `join_code` names, or else to the one this computer signed in to last.
+pub async fn login(app: &AppHandle, join_code: Option<String>) -> Result<Profile, String> {
     let base = base()?;
-    let config: AuthConfig = decode(send(http(), &base, None, Method::GET, "/v1/auth/feishu/config", &[], None).await.and_then(parse)?)?;
+    let join_code = join_code
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+        .or_else(|| load_company(app).map(|c| c.join_code))
+        .ok_or("请先输入公司加入码：向你们公司的 EchoMind 管理员要。")?;
+    let query = [("company", join_code.as_str())];
+    let config: AuthConfig = decode(send(http(), &base, None, Method::GET, "/v1/auth/feishu/config", &query, None).await.and_then(parse)?)?;
     let (code, verifier) = feishu::authorize(app, &config.app_id, &config.scopes.join(" ")).await?;
-    let body = json!({ "code": code, "codeVerifier": verifier, "redirectUri": feishu::redirect_uri(), "device": device() });
+    let body = json!({ "code": code, "codeVerifier": verifier, "redirectUri": feishu::redirect_uri(), "device": device(), "company": join_code });
     let signed_in: SignedIn = decode(send(http(), &base, None, Method::POST, "/v1/auth/feishu", &[], Some(&body)).await.and_then(parse)?)?;
+    remember_company(app, &signed_in.company);
     let p = signed_in.profile;
     let avatar = match p.avatar_url {
         Some(url) => feishu::avatar_data_url(&url).await,
         None => None,
     };
     let profile = Profile { name: p.name, en_name: p.en_name, open_id: p.open_id, union_id: p.union_id, email: p.email, tenant_key: p.tenant_key, avatar };
-    save(app, &Session { token: signed_in.token, profile: profile.clone(), missing_scopes: signed_in.missing_scopes })?;
+    save(app, &Session { token: signed_in.token, profile: profile.clone(), missing_scopes: signed_in.missing_scopes, admin: false })?;
+    // The directory on disk may be another company's.
+    crate::feishu_api::forget_directory(app).await;
     crate::show_main(app);
     Ok(profile)
 }
@@ -245,8 +296,11 @@ pub async fn status(app: &AppHandle) -> Value {
                 session = None;
             }
             Ok(me) => {
+                // Signed in before join codes existed: this is where the company gets remembered.
+                remember_company(app, &me["company"]);
                 if let Some(s) = session.as_mut() {
                     s.missing_scopes = me["missingScopes"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect();
+                    s.admin = me["admin"].as_bool() == Some(true);
                     let _ = save(app, s);
                 }
             }
@@ -257,6 +311,9 @@ pub async fn status(app: &AppHandle) -> Value {
     }
     json!({
         "configured": true,
+        "server": true,
+        "company": load_company(app),
+        "admin": session.as_ref().is_some_and(|s| s.admin),
         "missingScopes": session.as_ref().map(|s| s.missing_scopes.clone()).unwrap_or_default(),
         "user": session.map(|s| s.profile),
         "redirectUri": feishu::redirect_uri(),
@@ -268,6 +325,44 @@ pub async fn logout(app: &AppHandle) {
         let _ = call(app, Method::POST, "/v1/auth/logout", &[], None).await;
     }
     forget(app);
+}
+
+// ---------------------------------------------------------------------------
+// 公司管理, for the people the server lets manage companies
+
+/// A company id from the page, before it goes into a URL path.
+fn company_id(id: &str) -> Result<&str, String> {
+    if !id.is_empty() && id.len() <= 36 && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        Ok(id)
+    } else {
+        Err("没有这家公司。".into())
+    }
+}
+
+/// Every company, and the permissions a new company's Feishu app needs.
+#[tauri::command]
+pub async fn companies_list(app: AppHandle) -> Result<Value, String> {
+    Ok(call(&app, Method::GET, "/v1/admin/companies", &[], None).await?)
+}
+
+#[tauri::command]
+pub async fn companies_add(app: AppHandle, app_id: String, app_secret: String) -> Result<Value, String> {
+    Ok(call(&app, Method::POST, "/v1/admin/companies", &[], Some(&json!({ "appId": app_id, "appSecret": app_secret }))).await?)
+}
+
+/// `check` asks Feishu again; `disable` and `enable` switch the company off and on.
+#[tauri::command]
+pub async fn companies_update(app: AppHandle, id: String, action: String) -> Result<Value, String> {
+    if !matches!(action.as_str(), "check" | "disable" | "enable") {
+        return Err(format!("不认识的操作：{action}"));
+    }
+    Ok(call(&app, Method::POST, &format!("/v1/admin/companies/{}/{action}", company_id(&id)?), &[], None).await?)
+}
+
+#[tauri::command]
+pub async fn companies_replace_secret(app: AppHandle, id: String, app_secret: String) -> Result<Value, String> {
+    let path = format!("/v1/admin/companies/{}/secret", company_id(&id)?);
+    Ok(call(&app, Method::POST, &path, &[], Some(&json!({ "appSecret": app_secret }))).await?)
 }
 
 // ---------------------------------------------------------------------------
@@ -303,6 +398,13 @@ pub async fn llm_chat(app: &AppHandle, body: Value) -> Result<llm::Reply, String
 mod tests {
     use super::*;
     use crate::testing::{Request, Server};
+
+    #[test]
+    fn only_company_ids_go_into_paths() {
+        assert_eq!(company_id("0b5c5e0e-4f0e-4d43-9a57-7d1b2b1c3a4e"), Ok("0b5c5e0e-4f0e-4d43-9a57-7d1b2b1c3a4e"));
+        assert!(company_id("../me").is_err());
+        assert!(company_id("").is_err());
+    }
 
     #[test]
     fn trusts_the_bundled_ca() {

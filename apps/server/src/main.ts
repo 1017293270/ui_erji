@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { createServer } from "node:https";
 import { serve } from "@hono/node-server";
+import { Companies } from "./companies";
 import { loadConfig } from "./config";
 import { connect, migrate } from "./db";
-import { Feishu } from "./feishu/client";
 import { createApp } from "./http";
 import { run } from "./lifecycle";
 import { log } from "./log";
@@ -16,11 +16,14 @@ run("api", async () => {
 
   const sql = connect(config.databaseUrl);
   await migrate(sql);
+  const companies = new Companies({ sql, key: config.dataKey, defaultApp: config.feishu, admins: config.admins });
+  await companies.adoptDefault();
+  void companies.fillMissingNames();
 
   const app = createApp({
     sql,
     version: VERSION,
-    feishu: new Feishu({ app: config.feishu }),
+    companies,
     dataKey: config.dataKey,
     llm: config.deepseek,
   });

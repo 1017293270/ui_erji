@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Copy, Download, FolderOpen } from "lucide-react";
 import { applyTheme, cn, readTheme, Toolbox, type ThemeChoice } from "@echomind/ui";
-import { FeishuAvatar, useFeishuLogin } from "../components/Feishu";
+import { FeishuAvatar, JoinCodeInput, joinCodeReady, useFeishuLogin } from "../components/Feishu";
 import { PageHeader } from "../components/Shell";
 import { Badge, Button, Segmented, Toggle } from "../components/ui";
 import {
@@ -123,9 +123,15 @@ export function Settings() {
       </Group>
 
       <Group title="飞书">
-        {store.feishu ? (
-          <FeishuAccountRow />
-        ) : (
+        {store.feishu ? <FeishuAccountRow /> : null}
+        {store.feishu?.admin && store.feishu.user ? (
+          <Row label="公司管理" hint="添加使用 EchoMind 的公司。把加入码发给那家公司的同事，他们第一次登录时输入一次。">
+            <Button size="sm" onClick={() => navigate("/companies")}>
+              打开
+            </Button>
+          </Row>
+        ) : null}
+        {store.feishu ? null : (
           <Row label="连接状态" hint="用于登录、读取通讯录和日历参会人、创建飞书任务、发送每日待办卡片。">
             {s.feishuConnected ? <Badge tone="success" dot>已连接 · 演示租户</Badge> : <Badge tone="outline">未连接</Badge>}
             <Button size="sm" variant="ghost" onClick={() => set({ feishuConnected: !s.feishuConnected })}>
@@ -230,9 +236,11 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
 /** The real 飞书 account, in the app (the browser preview keeps the demo toggle). */
 function FeishuAccountRow() {
   const store = useStore();
-  const { busy, error, login, cancel, logout } = useFeishuLogin();
+  const { busy, error, login, cancel, logout, switchCompany } = useFeishuLogin();
+  const [code, setCode] = useState("");
   const feishu = store.feishu!;
   const user = feishu.user;
+  const company = feishu.company;
 
   if (!feishu.configured) {
     return (
@@ -252,7 +260,7 @@ function FeishuAccountRow() {
             {missing ? <Badge tone="clay" dot>需要重新登录</Badge> : <Badge tone="success" dot>已连接</Badge>}
           </p>
           <p className={cn("mt-0.5 text-[12.5px]", error ? "text-destructive" : missing ? "text-clay-text" : "truncate text-muted-foreground")}>
-            {error ?? (missing ? `还没有${missing}权限，重新登录一次就能授予。` : (user.email ?? user.enName ?? "飞书账号"))}
+            {error ?? (missing ? `还没有${missing}权限，重新登录一次就能授予。` : [company?.name, user.email ?? user.enName].filter(Boolean).join(" · ") || "飞书账号")}
           </p>
         </div>
         {missing ? (
@@ -266,6 +274,11 @@ function FeishuAccountRow() {
       </div>
     );
   }
+  // Through the server, the company comes first: its join code says which Feishu app to open.
+  const needsCode = !!feishu.server && !company;
+  const go = () => {
+    if (!busy && (!needsCode || joinCodeReady(code))) void login(needsCode ? code : undefined);
+  };
   return (
     <Row
       label="飞书账号"
@@ -274,6 +287,15 @@ function FeishuAccountRow() {
           <span className="text-destructive">{error}</span>
         ) : busy ? (
           "已在浏览器打开飞书授权页，确认后会自动回到这里。"
+        ) : needsCode ? (
+          "先输入公司加入码（向你们公司的 EchoMind 管理员要），再用飞书登录。"
+        ) : company ? (
+          <>
+            登录到 {company.name ?? "你们公司"}，用于读取通讯录和日历参会人、创建飞书任务。
+            <button className="no-drag ml-1.5 text-clay-text underline-offset-2 hover:underline" onClick={() => void switchCompany()}>
+              换一家公司
+            </button>
+          </>
         ) : (
           "用于登录、读取通讯录和日历参会人、创建飞书任务、发送每日待办卡片。"
         )
@@ -283,8 +305,10 @@ function FeishuAccountRow() {
         <Button size="sm" variant="ghost" onClick={cancel}>
           取消
         </Button>
+      ) : needsCode ? (
+        <JoinCodeInput value={code} onChange={setCode} onEnter={go} className="h-8 w-[136px]" />
       ) : null}
-      <Button size="sm" variant="primary" disabled={busy} onClick={() => void login()}>
+      <Button size="sm" variant="primary" disabled={busy || (needsCode && !joinCodeReady(code))} onClick={go}>
         {busy ? "等待授权…" : "用飞书登录"}
       </Button>
     </Row>

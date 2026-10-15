@@ -1,4 +1,4 @@
-import { type Feishu, HttpError, text } from "./client";
+import { type Feishu, FeishuError, HttpError, text } from "./client";
 
 /**
  * Feishu user sign-in. The desktop app runs the browser part (PKCE, a loopback redirect) and
@@ -36,8 +36,6 @@ export class OAuthRejected extends Error {
 /** The errors someone setting up the app is likely to hit, in words that say what to fix. */
 function explain(code: number, detail: string, redirectUri: string | undefined): string {
   switch (code) {
-    case 20002:
-      return "服务器上的飞书 App Secret 不对：请管理员核对 FEISHU_APP_SECRET。";
     case 20010:
       return "你不在这个飞书应用的可用范围里：请在开发者后台「版本管理与发布」里把自己加进可用范围，并发布版本。";
     case 20071:
@@ -53,7 +51,7 @@ function explain(code: number, detail: string, redirectUri: string | undefined):
 }
 
 async function requestToken(feishu: Feishu, body: Record<string, string>, redirectUri?: string): Promise<Tokens> {
-  if (!feishu.app) throw new Error("服务器还没有配置飞书应用：请管理员在 /srv/echomind/.env 里填写 FEISHU_APP_ID 和 FEISHU_APP_SECRET。");
+  if (!feishu.app) throw new Error("这家公司还没有配置飞书应用：请管理员在「公司管理」里添加。");
   // Rejections come back as 4xx with a JSON body of their own shape, so read whatever arrives.
   const { status, reply } = await feishu.postRaw(feishu.url(["authen", "v2", "oauth", "token"]), {
     ...body,
@@ -75,6 +73,8 @@ async function requestToken(feishu: Feishu, body: Record<string, string>, redire
   }
   // Feishu's own trouble is not a verdict on the token: try again later rather than sign out.
   if (status >= 500 || code === 20050) throw new HttpError(status);
+  // Nor is a wrong App Secret, which would otherwise sign out everyone in the company.
+  if (code === 20002) throw new FeishuError(code, text(reply.error_description) ?? "app_id and app_secret did not match");
   throw new OAuthRejected(code, explain(code, text(reply.error_description) ?? text(reply.error) ?? "", redirectUri));
 }
 

@@ -35,8 +35,9 @@ export function fakeFetch(handler: (req: FakeRequest) => Answer | Promise<Answer
   return { fetch, requests };
 }
 
-/** A Feishu client against `handler`; paths in requests start with /open-apis. */
+/** A Feishu client against `handler`; paths in requests start with /open-apis. `client` makes one for another app. */
 export function fakeFeishu(handler: (req: FakeRequest) => Answer | Promise<Answer>) {
   const { fetch, requests } = fakeFetch(handler);
-  return { feishu: new Feishu({ app: { appId: "cli_test", appSecret: "secret" }, base: "https://feishu.test/open-apis", fetch }), requests };
+  const client = (app: { appId: string; appSecret: string }) => new Feishu({ app, base: "https://feishu.test/open-apis", fetch });
+  return { feishu: client({ appId: "cli_test", appSecret: "secret" }), client, requests };
 }

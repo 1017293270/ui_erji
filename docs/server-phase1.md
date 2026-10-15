@@ -183,9 +183,11 @@
 
 | 接口 | 说明 |
 | --- | --- |
-| `POST /v1/auth/feishu` | 见下方「登录」 |
+| `GET /v1/auth/feishu/config?company=<加入码>` | 这家公司的 App ID 和要申请的权限（2026-10-14 起按公司区分，见 `docs/companies.md`） |
+| `POST /v1/auth/feishu` | 见下方「登录」；带上加入码 `company` |
 | `POST /v1/auth/logout` | 吊销当前会话 |
-| `GET /v1/me` | 当前用户、缺哪些权限、是不是领导 |
+| `GET /v1/me` | 当前用户、缺哪些权限、所在公司、是不是管理员 |
+| `/v1/admin/companies…` | 公司管理，见 `docs/companies.md` |
 | `GET /v1/directory` | 通讯录 `Person[]`，服务端缓存 12 小时，跟现在的 `feishu_directory` 返回值一样 |
 | `GET /v1/calendar/attendees?start&end` | 跟现在的 `feishu_meeting_attendees` 一样，用记录人的 token 查 |
 | `POST /v1/llm/chat` | DeepSeek 代理 |

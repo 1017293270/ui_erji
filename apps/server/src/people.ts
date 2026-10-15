@@ -10,23 +10,6 @@ const DIRECTORY_MAX_AGE_MS = 12 * 3_600_000;
 /** Tenant directories being walked right now: a second caller waits for the same walk. */
 const walking = new Map<string, Promise<void>>();
 
-/** Self-built apps live in one tenant: the first sign-in records it, later ones must match. */
-export class WrongTenant extends Error {
-  constructor() {
-    super("这个飞书账号不属于已开通 EchoMind 的企业。");
-  }
-}
-
-export async function tenantFor(sql: Sql, appId: string, tenantKey: string): Promise<string> {
-  const [created] = await sql<{ id: string }[]>`
-    insert into tenants (feishu_app_id, feishu_tenant_key) values (${appId}, ${tenantKey})
-    on conflict do nothing returning id`;
-  if (created) return created.id;
-  const [tenant] = await sql<{ id: string; feishuTenantKey: string }[]>`select id, feishu_tenant_key from tenants where feishu_app_id = ${appId}`;
-  if (!tenant || tenant.feishuTenantKey !== tenantKey) throw new WrongTenant();
-  return tenant.id;
-}
-
 /** The person signing in, known from now on even before the directory lists them. */
 export async function upsertSignedIn(sql: Sql, tenantId: string, profile: Profile): Promise<string> {
   const [row] = await sql<{ id: string }[]>`

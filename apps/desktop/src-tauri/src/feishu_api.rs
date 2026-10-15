@@ -583,6 +583,15 @@ async fn create_task(base: &str, token: &str, body: &Value) -> Result<CreatedTas
 // ---------------------------------------------------------------------------
 // Commands
 
+/// Forgets the cached directory, so the next call fetches it: after a sign-in, maybe to another company.
+pub(crate) async fn forget_directory(app: &AppHandle) {
+    let state = app.state::<FeishuApi>();
+    let _walking = state.directory.lock().await;
+    if let Ok(dir) = storage::data_dir(app) {
+        let _ = std::fs::remove_file(dir.join("directory.json"));
+    }
+}
+
 /// Everyone in the tenant. Without `refresh` a recent cache answers; when Feishu cannot be
 /// reached (or only the background refresh failed) the last directory is returned.
 #[tauri::command]

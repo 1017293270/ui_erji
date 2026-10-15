@@ -13,6 +13,7 @@ export type Route =
   | { name: "team" }
   | { name: "people" }
   | { name: "settings" }
+  | { name: "companies" }
   | { name: "welcome" }
   | { name: "recorder" }
   | { name: "art" };
@@ -29,7 +30,16 @@ function parse(hash: string): Location {
   if (head === "meetings" && id && tail === "confirm") route = { name: "confirm", id };
   else if (head === "meetings" && id) route = { name: "meeting", id };
   else if (head === "meetings") route = { name: "meetings" };
-  else if (head === "todos" || head === "team" || head === "people" || head === "settings" || head === "welcome" || head === "recorder" || head === "art") {
+  else if (
+    head === "todos" ||
+    head === "team" ||
+    head === "people" ||
+    head === "settings" ||
+    head === "companies" ||
+    head === "welcome" ||
+    head === "recorder" ||
+    head === "art"
+  ) {
     route = { name: head };
   }
   return { route, query, path };

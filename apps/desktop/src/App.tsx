@@ -9,6 +9,7 @@ import { Todos } from "./pages/Todos";
 import { Team } from "./pages/Team";
 import { People } from "./pages/People";
 import { Settings } from "./pages/Settings";
+import { Companies } from "./pages/Companies";
 import { Welcome } from "./pages/Welcome";
 import { Recorder } from "./pages/Recorder";
 import { ArtGallery } from "./pages/ArtGallery";
@@ -54,6 +55,8 @@ function Screens() {
       return <Shell crumbs={["工作空间", "人员与声纹"]}><People /></Shell>;
     case "settings":
       return <Shell crumbs={["工作空间", "设置"]}><Settings /></Shell>;
+    case "companies":
+      return <Shell crumbs={["设置", "公司管理"]}><Companies /></Shell>;
     default:
       return <Shell crumbs={["工作空间", "工作台"]}><Home /></Shell>;
   }

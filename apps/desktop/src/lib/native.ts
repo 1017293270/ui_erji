@@ -119,8 +119,16 @@ export type FeishuProfile = {
   avatar?: string | null;
 };
 
+/** The company this computer signs in to, remembered after signing out. */
+export type SavedCompany = { joinCode: string; name: string | null };
+
 export type FeishuStatus = {
   configured: boolean;
+  /** Signing in goes through the EchoMind server, which needs the company's join code first. */
+  server?: boolean;
+  company?: SavedCompany | null;
+  /** May open 公司管理. */
+  admin?: boolean;
   user: FeishuProfile | null;
   redirectUri: string;
   /** Scopes the saved sign-in lacks (calendar, tasks): signing in again grants them. */
@@ -133,9 +141,17 @@ export async function feishuStatus(): Promise<FeishuStatus | null> {
   return invoke<FeishuStatus>("feishu_status");
 }
 
-/** Opens Feishu's consent page in the browser and resolves once the person has signed in. */
-export async function feishuLogin(): Promise<FeishuProfile> {
-  return invoke<FeishuProfile>("feishu_login");
+/**
+ * Opens Feishu's consent page in the browser and resolves once the person has signed in.
+ * `joinCode` picks the company; without it, the one this computer signed in to last.
+ */
+export async function feishuLogin(joinCode?: string): Promise<FeishuProfile> {
+  return invoke<FeishuProfile>("feishu_login", { joinCode: joinCode ?? null });
+}
+
+/** Forgets the company, so the next sign-in asks for a join code. */
+export async function feishuForgetCompany(): Promise<void> {
+  if (isTauri) await invoke("feishu_forget_company");
 }
 
 export async function feishuCancel(): Promise<void> {
@@ -144,6 +160,43 @@ export async function feishuCancel(): Promise<void> {
 
 export async function feishuLogout(): Promise<void> {
   if (isTauri) await invoke("feishu_logout");
+}
+
+/* ------------------------------------------------------------------ */
+/* 公司管理: only for the people the server lets manage companies.      */
+/* ------------------------------------------------------------------ */
+
+export type Company = {
+  id: string;
+  /** The name registered in Feishu; null until Feishu has told the server. */
+  name: string | null;
+  appId: string;
+  joinCode: string | null;
+  /** People who have signed in at least once. */
+  people: number;
+  disabled: boolean;
+  /** The company the server was set up with: the admins' own. */
+  isDefault: boolean;
+  createdAt: string;
+};
+
+/** In the shape of the Feishu console's 批量导入 box. */
+export type AppPermissions = { scopes: { tenant: string[]; user: string[] } };
+
+export async function companiesList(): Promise<{ companies: Company[]; permissions: AppPermissions }> {
+  return invoke("companies_list");
+}
+
+export async function companiesAdd(appId: string, appSecret: string): Promise<Company> {
+  return invoke("companies_add", { appId, appSecret });
+}
+
+export async function companiesUpdate(id: string, action: "check" | "disable" | "enable"): Promise<Company> {
+  return invoke("companies_update", { id, action });
+}
+
+export async function companiesReplaceSecret(id: string, appSecret: string): Promise<Company> {
+  return invoke("companies_replace_secret", { id, appSecret });
 }
 
 /** Every active member of the company, as people todos can belong to. */

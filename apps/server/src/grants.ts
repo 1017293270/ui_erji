@@ -1,6 +1,7 @@
+import type { Companies } from "./companies";
 import { seal, unseal } from "./crypto";
 import type { Sql } from "./db";
-import { type Feishu, FeishuError } from "./feishu/client";
+import { FeishuError } from "./feishu/client";
 import { OAuthRejected, refreshTokens, type Tokens } from "./feishu/oauth";
 import { log } from "./log";
 
@@ -17,7 +18,7 @@ export class SignedOut extends Error {
   }
 }
 
-export type GrantDeps = { sql: Sql; feishu: Feishu; key: Buffer | null };
+export type GrantDeps = { sql: Sql; companies: Companies; key: Buffer | null };
 export type UserToken = { accessToken: string; openId: string };
 
 type Row = {
@@ -63,6 +64,11 @@ type Reason = { kind: "expiring" } | { kind: "rejected"; token: string } | { kin
 
 async function refresh(deps: GrantDeps, personId: string, reason: Reason): Promise<UserToken> {
   const key = needKey(deps);
+  // The company's client is looked up before the transaction: inside it, waiting for a second
+  // connection while holding the row lock can starve the pool when many refresh at once.
+  const [person] = await deps.sql<{ tenantId: string }[]>`select tenant_id from people where id = ${personId}`;
+  if (!person) throw new SignedOut();
+  const feishu = await deps.companies.feishu(person.tenantId);
   const outcome = await deps.sql.begin(async (tx) => {
     const [g] = await tx<Row[]>`
       select g.person_id, p.open_id, g.access_token, g.access_expires_at, g.refresh_token, g.refresh_expires_at, g.updated_at, g.revoked_at
@@ -85,7 +91,7 @@ async function refresh(deps: GrantDeps, personId: string, reason: Reason): Promi
     }
     let tokens: Tokens;
     try {
-      tokens = await refreshTokens(deps.feishu, refreshToken);
+      tokens = await refreshTokens(feishu, refreshToken);
     } catch (e) {
       if (e instanceof OAuthRejected) {
         log("warn", "飞书授权已失效", { person: personId, code: e.code });
@@ -136,10 +142,11 @@ export async function asUser<T>(deps: GrantDeps, personId: string, op: (token: U
   }
 }
 
-/** Refreshes every grant not refreshed for 20 hours, so refresh tokens never lapse. */
+/** Refreshes every grant not refreshed for 20 hours, so refresh tokens never lapse. Disabled companies are left alone. */
 export async function keepGrantsAlive(deps: GrantDeps): Promise<{ refreshed: number; signedOut: number; failed: number }> {
   const due = await deps.sql<{ personId: string }[]>`
-    select person_id from feishu_grants where revoked_at is null and updated_at < now() - interval '20 hours'`;
+    select g.person_id from feishu_grants g join people p on p.id = g.person_id join tenants t on t.id = p.tenant_id
+    where g.revoked_at is null and g.updated_at < now() - interval '20 hours' and t.disabled_at is null`;
   const result = { refreshed: 0, signedOut: 0, failed: 0 };
   for (const { personId } of due) {
     try {

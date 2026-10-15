@@ -55,10 +55,19 @@ export class RateLimit {
   ) {}
 
   take(key: string, now = Date.now()): boolean {
+    // Keys are people or addresses; forget the quiet ones before the map grows large.
+    if (this.hits.size > 10_000) {
+      for (const [k, times] of this.hits) if (!times.some((t) => t > now - this.windowMs)) this.hits.delete(k);
+    }
     const recent = (this.hits.get(key) ?? []).filter((t) => t > now - this.windowMs);
     const allowed = recent.length < this.max;
     if (allowed) recent.push(now);
     this.hits.set(key, recent);
     return allowed;
+  }
+
+  /** Takes back the last call counted for `key`: it turned out not to count. */
+  refund(key: string): void {
+    this.hits.get(key)?.pop();
   }
 }

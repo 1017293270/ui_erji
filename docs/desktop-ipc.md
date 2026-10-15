@@ -83,14 +83,26 @@ signed out, rate limited, DeepSeek unreachable or silent for 10 minutes, not con
 
 | Command | Args | Returns |
 | --- | --- | --- |
-| `feishu_status` | – | `{ configured, user: FeishuProfile \| null, redirectUri, missingScopes: string[] }` |
-| `feishu_login` / `feishu_cancel` / `feishu_logout` | – | exists |
+| `feishu_status` | – | `{ configured, server, company: { joinCode, name } \| null, admin, user: FeishuProfile \| null, redirectUri, missingScopes: string[] }` |
+| `feishu_login` | `joinCode?: string` | `FeishuProfile`. `joinCode` picks the company; left out, the one this computer signed in to last |
+| `feishu_cancel` / `feishu_logout` | – | exists |
+| `feishu_forget_company` | – | forgets the company, so the next sign-in asks for a join code |
+| `companies_list` | – | `{ companies: Company[], permissions: { scopes: { tenant, user } } }` — admins only |
+| `companies_add` | `appId, appSecret` | `Company` — checked with Feishu first |
+| `companies_update` | `id, action: "check" \| "disable" \| "enable"` | `Company` |
+| `companies_replace_secret` | `id, appSecret` | `Company` — checked with Feishu first |
 | `feishu_directory` | `refresh?: boolean` | `Person[]` — every active member (id = open_id, `feishuOpenId` = open_id, department name, `title` = job title, `aliases` = en_name / nickname); falls back to `directory.json` offline |
 | `feishu_meeting_attendees` | `start: string, end: string` (ISO) | `{ eventTitle: string, attendeeIds: string[] } \| null` — the signed-in user's calendar event overlapping the window most |
 | `feishu_create_task` | `task: { title, description?, due?: "YYYY-MM-DD", assigneeId: string }` | `{ guid: string, url?: string }` — created as the signed-in user (task v2) |
 
+Each company signs in through its own Feishu app, so the company comes first: its six-character
+join code (`server-company.json`, kept after signing out) picks it, and `server: true` with
+`company: null` means the UI has to ask for one. People signed in before join codes existed get
+their company remembered from `GET /v1/me`. `admin` says whether 公司管理 may be opened; the server
+checks again on every `companies_*` call. See `docs/companies.md`.
+
 Sign-in asks for `offline_access task:task:write calendar:calendar:read calendar:calendar.event:read`
-(the server says which, with the App ID, at `GET /v1/auth/feishu/config`). The browser comes back
+(the server says which, with the company's App ID, at `GET /v1/auth/feishu/config?company=<join code>`). The browser comes back
 to `http://127.0.0.1:43517/feishu/callback`; the app hands the code and PKCE verifier to the
 server, which signs in to Feishu, keeps the person's tokens sealed, and returns an EchoMind
 session. `missingScopes` lists any the grant lacks, so the UI can ask for a fresh sign-in

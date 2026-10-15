@@ -21,8 +21,10 @@ const Env = z.object({
   DEEPSEEK_API_KEY: optional,
   DEEPSEEK_BASE_URL: z.preprocess((v) => v || undefined, z.url().default("https://api.deepseek.com")),
   DEEPSEEK_MODEL: z.preprocess((v) => v || undefined, z.string().default("deepseek-flash")),
-  /** 32 random bytes, base64: encrypts Feishu tokens at rest. */
+  /** 32 random bytes, base64: encrypts Feishu tokens and App Secrets at rest. */
   ECHOMIND_DATA_KEY: optional,
+  /** open_ids, comma-separated, of the people in the default company who manage companies. */
+  ECHOMIND_ADMINS: optional,
 });
 
 export type Config = {
@@ -31,7 +33,9 @@ export type Config = {
   host: string;
   port: number;
   tls: { cert: string; key: string } | null;
+  /** The default company's app. Once taken into the database, the secret saved there wins. */
   feishu: { appId: string; appSecret: string } | null;
+  admins: string[];
   deepseek: { apiKey: string | null; baseUrl: string; model: string };
   dataKey: Buffer | null;
 };
@@ -58,6 +62,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     port: e.PORT,
     tls: e.TLS_CERT && e.TLS_KEY ? { cert: e.TLS_CERT, key: e.TLS_KEY } : null,
     feishu: e.FEISHU_APP_ID && e.FEISHU_APP_SECRET ? { appId: e.FEISHU_APP_ID, appSecret: e.FEISHU_APP_SECRET } : null,
+    admins: (e.ECHOMIND_ADMINS ?? "").split(/[\s,]+/).filter(Boolean),
     deepseek: { apiKey: e.DEEPSEEK_API_KEY ?? null, baseUrl: e.DEEPSEEK_BASE_URL.replace(/\/+$/, ""), model: e.DEEPSEEK_MODEL },
     dataKey,
   };

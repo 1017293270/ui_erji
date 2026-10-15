@@ -2,12 +2,16 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { Companies } from "./companies";
 import { beat, migrate, type Sql } from "./db";
-import { Feishu } from "./feishu/client";
 import { checkHealth, createApp } from "./http";
 import { freshDb, hasDb } from "./testing/db";
 
-const stubs = { feishu: new Feishu({ app: null }), dataKey: null, llm: { apiKey: null, baseUrl: "https://llm.test", model: "m" } };
+const stubs = {
+  companies: new Companies({ sql: {} as Sql, key: null, defaultApp: null, admins: [] }),
+  dataKey: null,
+  llm: { apiKey: null, baseUrl: "https://llm.test", model: "m" },
+};
 
 describe.skipIf(!hasDb)("database", () => {
   let db: Awaited<ReturnType<typeof freshDb>>;

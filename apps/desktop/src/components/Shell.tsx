@@ -45,6 +45,8 @@ function activeNav(route: Route): NavKey {
     case "people":
     case "settings":
       return route.name;
+    case "companies":
+      return "settings";
     default:
       return "home";
   }

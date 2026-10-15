@@ -1,6 +1,6 @@
+import { Companies } from "./companies";
 import { loadConfig } from "./config";
 import { beat, connect, migrate } from "./db";
-import { Feishu } from "./feishu/client";
 import { keepGrantsAlive } from "./grants";
 import { every, run } from "./lifecycle";
 import { log } from "./log";
@@ -16,7 +16,9 @@ run("worker", async () => {
   const sql = connect(config.databaseUrl, 5);
   await migrate(sql);
 
-  const grants = { sql, feishu: new Feishu({ app: config.feishu }), key: config.dataKey };
+  const companies = new Companies({ sql, key: config.dataKey, defaultApp: config.feishu, admins: config.admins });
+  await companies.adoptDefault();
+  const grants = { sql, companies, key: config.dataKey };
 
   const stopBeat = every(30_000, "心跳", () => beat(sql, "worker"));
   const stopGrants = every(3_600_000, "刷新飞书授权", async () => {

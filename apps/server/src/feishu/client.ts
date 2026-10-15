@@ -58,15 +58,18 @@ export function explain(error: unknown, identity: Identity): string {
     case 99991668:
     case 99991677:
       if (identity === "user") return "飞书登录已经过期：请重新用飞书登录。";
-      if (code === 99991663) return "飞书应用的访问凭证无效，请稍后再试；一直这样请管理员核对服务器上的 FEISHU_APP_ID 和 FEISHU_APP_SECRET。";
+      if (code === 99991663) return "飞书应用的访问凭证无效，请稍后再试；一直这样请管理员在 EchoMind「公司管理」里核对这家公司的飞书应用。";
       break;
     case 99991664:
     case 99991665:
-      return "飞书应用的访问凭证无效，请稍后再试；一直这样请管理员核对服务器上的 FEISHU_APP_ID 和 FEISHU_APP_SECRET。";
+      return "飞书应用的访问凭证无效，请稍后再试；一直这样请管理员在 EchoMind「公司管理」里核对这家公司的飞书应用。";
     case 10015:
+    case 20002:
     case 99991543:
-      return "服务器上的飞书 App ID 或 App Secret 不对：请管理员核对 FEISHU_APP_ID 和 FEISHU_APP_SECRET。";
+      return "这家公司飞书应用的 App ID 或 App Secret 不对：请管理员在 EchoMind「公司管理」里更换 App Secret。";
     case 10014:
+    case 11210:
+    case 20009:
     case 99991662:
     case 99991673:
       return "飞书应用已停用，或者还没有发布到企业里：请在开发者后台检查应用状态，并发布一个版本。";
@@ -218,7 +221,7 @@ export class Feishu {
   // The app's own token
 
   private async requestTenantToken(): Promise<string> {
-    if (!this.app) throw new Error("服务器还没有配置飞书应用：请管理员在 /srv/echomind/.env 里填写 FEISHU_APP_ID 和 FEISHU_APP_SECRET。");
+    if (!this.app) throw new Error("这家公司还没有配置飞书应用：请管理员在「公司管理」里添加。");
     const reply = await this.send(this.url(["auth", "v3", "tenant_access_token", "internal"]), {
       method: "POST",
       json: { app_id: this.app.appId, app_secret: this.app.appSecret },

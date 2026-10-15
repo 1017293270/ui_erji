@@ -192,9 +192,9 @@ pub(crate) async fn authorize(app: &AppHandle, app_id: &str, scopes: &str) -> Re
     Ok((code, verifier))
 }
 
-pub async fn login(app: &AppHandle) -> Result<Profile, String> {
+pub async fn login(app: &AppHandle, join_code: Option<String>) -> Result<Profile, String> {
     if config::server_url().is_some() {
-        return server::login(app).await;
+        return server::login(app, join_code).await;
     }
     let creds = config::feishu().ok_or(NOT_CONFIGURED)?;
     let (code, verifier) = authorize(app, &creds.app_id, &SCOPES.join(" ")).await?;
@@ -522,15 +522,23 @@ pub async fn feishu_status(app: AppHandle) -> Value {
     };
     json!({
         "configured": config::feishu().is_some(),
+        "server": false,
         "missingScopes": session.as_ref().map(|s| missing_scopes(s.scope.as_deref())).unwrap_or_default(),
         "user": session.map(|s| s.profile),
         "redirectUri": redirect_uri(),
     })
 }
 
+/// `join_code`: the company to sign in to; left out, the one this computer signed in to last.
 #[tauri::command]
-pub async fn feishu_login(app: AppHandle) -> Result<Profile, String> {
-    login(&app).await
+pub async fn feishu_login(app: AppHandle, join_code: Option<String>) -> Result<Profile, String> {
+    login(&app, join_code).await
+}
+
+/// Forgets the company, so the next sign-in asks for a join code.
+#[tauri::command]
+pub fn feishu_forget_company(app: AppHandle) {
+    server::forget_company(&app);
 }
 
 #[tauri::command]

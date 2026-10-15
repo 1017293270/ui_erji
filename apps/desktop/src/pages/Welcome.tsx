@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { clock } from "@echomind/shared";
 import { cn, EchoMark, InboxTray, LaptopVoice, MicDoodle, Wave } from "@echomind/ui";
-import { FeishuAvatar, useFeishuLogin } from "../components/Feishu";
+import { FeishuAvatar, JoinCodeInput, joinCodeReady, useFeishuLogin } from "../components/Feishu";
 import { Button } from "../components/ui";
 import { isTauri, onCaptureEvent, requestMicrophone, requestSystemAudio, sendCapture, startCapture } from "../lib/native";
 import { isWindows } from "../lib/platform";
@@ -107,7 +107,8 @@ export function Welcome() {
 /** Sign in with 飞书 for real in the app; the browser preview just moves on. */
 function ConnectFeishu({ onDone }: { onDone: () => void }) {
   const store = useStore();
-  const { busy, error, login, cancel } = useFeishuLogin();
+  const { busy, error, login, cancel, switchCompany } = useFeishuLogin();
+  const [code, setCode] = useState("");
   const feishu = store.feishu;
   const user = feishu?.user;
   const intro = "用飞书账号登录。EchoMind 会读取通讯录和日历参会人来认人，把待办建成飞书任务，并每天发一张待办卡片。";
@@ -148,17 +149,27 @@ function ConnectFeishu({ onDone }: { onDone: () => void }) {
       </Step>
     );
   }
+  // Through the server, the company comes first: its join code says which Feishu app to open.
+  const needsCode = !!feishu.server && !feishu.company;
+  const go = async () => {
+    if (busy || (needsCode && !joinCodeReady(code))) return;
+    if (await login(needsCode ? code : undefined)) onDone();
+  };
   return (
     <Step art={<InboxTray className="w-[200px]" />} title="连接飞书" text={intro}>
-      <Button
-        variant="primary"
-        size="lg"
-        className="w-full"
-        disabled={busy}
-        onClick={async () => {
-          if (await login()) onDone();
-        }}
-      >
+      {needsCode ? (
+        <JoinCodeInput value={code} onChange={setCode} onEnter={() => void go()} className="h-11 w-full text-center text-[16px]" />
+      ) : feishu.company ? (
+        <p className="text-[13px] text-muted-foreground">
+          登录到 <span className="font-medium text-foreground">{feishu.company.name ?? "你们公司"}</span>
+          {busy ? null : (
+            <button className="no-drag ml-2 text-clay-text underline-offset-2 hover:underline" onClick={() => void switchCompany()}>
+              换一家公司
+            </button>
+          )}
+        </p>
+      ) : null}
+      <Button variant="primary" size="lg" className="w-full" disabled={busy || (needsCode && !joinCodeReady(code))} onClick={() => void go()}>
         {busy ? "正在等你在浏览器里授权…" : "用飞书登录"}
       </Button>
       {busy ? (
@@ -167,6 +178,8 @@ function ConnectFeishu({ onDone }: { onDone: () => void }) {
         </button>
       ) : error ? (
         <p className="selectable text-[12.5px] leading-relaxed text-destructive">{error}</p>
+      ) : needsCode ? (
+        <p className="text-[12px] text-subtle">加入码向你们公司的 EchoMind 管理员要，只需要输入一次。</p>
       ) : (
         <p className="text-[12px] text-subtle">会在浏览器里打开飞书授权页，确认后自动回到这里。</p>
       )}
