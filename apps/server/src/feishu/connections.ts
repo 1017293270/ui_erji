@@ -58,7 +58,9 @@ const openWithSdk: Opener = (app, handle, events) => {
 function sdkLogger(tenantId: string): Lark.Logger {
   const said = new Map<string, number>();
   const say = (...parts: unknown[]) => {
+    // The SDK passes its words as one array: ["[ws]", "…"].
     const text = parts
+      .flat()
       .map((p) => (p instanceof Error ? p.message : typeof p === "string" ? p : JSON.stringify(p)))
       .join(" ")
       .slice(0, 300);

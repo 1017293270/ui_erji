@@ -31,8 +31,18 @@ await build({
   format: "esm",
   sourcemap: true,
   legalComments: "none",
-  // CommonJS dependencies inside an ESM bundle still call require().
-  banner: { js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" },
+  // CommonJS dependencies inside an ESM bundle still call require() and read __dirname (the
+  // Feishu SDK does, for its own version).
+  banner: {
+    js: [
+      "import { createRequire as __createRequire } from 'node:module';",
+      "import { fileURLToPath as __fileURLToPath } from 'node:url';",
+      "import { dirname as __pathDirname } from 'node:path';",
+      "const require = __createRequire(import.meta.url);",
+      "const __filename = __fileURLToPath(import.meta.url);",
+      "const __dirname = __pathDirname(__filename);",
+    ].join(" "),
+  },
   define: { __VERSION__: JSON.stringify(version) },
   logLevel: "warning",
 });
