@@ -17,7 +17,9 @@
         const tauri = window.__TAURI_INTERNALS__;
         if (tauri && tauri.metadata && tauri.metadata.currentWindow.label === "recorder") history.replaceState(null, "", "#/recorder");
         if (location.hash.startsWith("#/recorder")) d.classList.add("recorder-window");
-        if (navigator.userAgent.includes("Mac")) d.classList.add("platform-mac");
+        // Phones first: an iPhone's user agent says "like Mac OS X".
+        if (/Android|iPhone|iPad/.test(navigator.userAgent)) d.classList.add("platform-mobile");
+        else if (navigator.userAgent.includes("Mac")) d.classList.add("platform-mac");
         else if (navigator.userAgent.includes("Windows")) d.classList.add("platform-win");
       })();
     </script>

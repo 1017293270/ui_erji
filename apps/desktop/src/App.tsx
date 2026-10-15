@@ -13,6 +13,8 @@ import { Companies } from "./pages/Companies";
 import { Welcome } from "./pages/Welcome";
 import { Recorder } from "./pages/Recorder";
 import { ArtGallery } from "./pages/ArtGallery";
+import { MobileApp } from "./mobile/MobileApp";
+import { isMobile } from "./lib/platform";
 
 export function App() {
   const { route } = useLocation();
@@ -24,11 +26,7 @@ export function App() {
       </StoreProvider>
     );
   }
-  return (
-    <StoreProvider>
-      <Screens />
-    </StoreProvider>
-  );
+  return <StoreProvider>{isMobile ? <MobileApp /> : <Screens />}</StoreProvider>;
 }
 
 function Screens() {

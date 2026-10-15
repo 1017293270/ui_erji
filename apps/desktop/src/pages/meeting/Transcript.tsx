@@ -4,6 +4,7 @@ import type { Chapter, Segment } from "@echomind/shared";
 import { clock } from "@echomind/shared";
 import { cn } from "@echomind/ui";
 import { SpeakerDot } from "../../components/ui";
+import { isMobile } from "../../lib/platform";
 import { speakerName, speakerTone, useStore } from "../../lib/store";
 import { useDetail } from "./context";
 
@@ -72,7 +73,7 @@ export function TranscriptView({ chapters, onNameSpeaker }: { chapters: Chapter[
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-3 border-b border-border px-8 py-2.5">
+      <div className="flex items-center gap-3 border-b border-border px-8 py-2.5 max-sm:px-4">
         <label className="flex h-8 flex-1 items-center gap-2 rounded-[9px] px-1 text-[13px] focus-within:bg-card">
           <Search className="size-3.5 text-subtle" aria-hidden />
           <input
@@ -95,11 +96,11 @@ export function TranscriptView({ chapters, onNameSpeaker }: { chapters: Chapter[
         </span>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-8 pt-4 pb-10">
+      <div className="min-h-0 flex-1 overflow-y-auto px-8 pt-4 pb-10 max-sm:px-4">
         {blocks.map((block, bi) => (
           <section key={block.chapter?.id ?? bi} className="mb-2">
             {block.chapter ? (
-              <h3 className="sticky top-[-16px] z-10 -mx-8 mb-1 bg-background/95 px-8 pt-4 pb-2 backdrop-blur-[2px]">
+              <h3 className="sticky top-[-16px] z-10 -mx-8 mb-1 bg-background/95 px-8 pt-4 pb-2 backdrop-blur-[2px] max-sm:-mx-4 max-sm:px-4">
                 <span className="serif text-[17px]">{block.chapter.title}</span>
                 <span className="num ml-2 text-[12px] text-muted-foreground">{clock(block.chapter.start)}</span>
               </h3>
@@ -186,7 +187,8 @@ function highlight(text: string, query: string) {
   );
 }
 
-const BARS = 220;
+/** Fewer on a phone, where 220 bars and their gaps would not fit. */
+const BARS = isMobile ? 64 : 220;
 
 /** Deterministic bar heights, so the waveform looks the same every time. */
 function noise(i: number) {
@@ -229,7 +231,7 @@ function Player() {
   }, [toggle]);
 
   return (
-    <div className="flex items-center gap-4 border-t border-border bg-card/60 px-6 py-3">
+    <div className="flex items-center gap-4 border-t border-border bg-card/60 px-6 py-3 max-sm:gap-2.5 max-sm:px-3">
       <button
         onClick={toggle}
         aria-label={playing ? "暂停" : "播放"}

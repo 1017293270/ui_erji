@@ -6,6 +6,7 @@ import { cn } from "@echomind/ui";
 import { Avatar, Badge, Button, SpeakerDot, Tabs } from "../../components/ui";
 import { BasisBadge } from "../../components/TodoRow";
 import { dueLabel } from "../../lib/dates";
+import { isMobile } from "../../lib/platform";
 import { SCENE_NAME, STAGE_LABEL } from "../../lib/process";
 import { navigate } from "../../lib/router";
 import { LIVE, speakerName, speakerTone, useStore } from "../../lib/store";
@@ -86,7 +87,7 @@ function PointList({ title, points, marker }: { title: string; points: Point[]; 
   );
 }
 
-function MinutesTab({ minutes }: { minutes: Minutes }) {
+export function MinutesTab({ minutes }: { minutes: Minutes }) {
   const store = useStore();
   const { meeting } = useDetail();
   const busy = !!store.jobs[meeting.id];
@@ -115,7 +116,7 @@ function MinutesTab({ minutes }: { minutes: Minutes }) {
   );
 }
 
-function TodosTab() {
+export function TodosTab() {
   const store = useStore();
   const { meeting, jump } = useDetail();
   const todos = store.todos.filter((t) => t.meetingId === meeting.id);
@@ -159,7 +160,7 @@ function TodosTab() {
   );
 }
 
-function SpeakersTab({ naming, onNaming }: { naming: string | null; onNaming: (id: string | null) => void }) {
+export function SpeakersTab({ naming, onNaming }: { naming: string | null; onNaming: (id: string | null) => void }) {
   const store = useStore();
   const { meeting, segments, speakers } = useDetail();
   const total = segments.reduce((sum, s) => sum + (s.end - s.start), 0) || 1;
@@ -274,16 +275,21 @@ function SceneNote() {
       ) : null}
       {open ? (
         <div className="fade-in mt-3 border-t border-soft-line pt-3">
-          <p className="mb-2 text-[12px] text-muted-foreground">会议场景</p>
-          <div className="flex gap-1.5">
-            {(["in-person", "online"] as const).map((s) =>
-              chip(picked === s, SCENE_NAME[s], () => {
-                setPicked(s);
-                setPeople(null);
-              }),
-            )}
-          </div>
-          <p className="mt-3 mb-2 text-[12px] text-muted-foreground">
+          {/* A phone records only the room. */}
+          {isMobile ? null : (
+            <>
+              <p className="mb-2 text-[12px] text-muted-foreground">会议场景</p>
+              <div className="mb-3 flex gap-1.5">
+                {(["in-person", "online"] as const).map((s) =>
+                  chip(picked === s, SCENE_NAME[s], () => {
+                    setPicked(s);
+                    setPeople(null);
+                  }),
+                )}
+              </div>
+            </>
+          )}
+          <p className="mb-2 text-[12px] text-muted-foreground">
             {picked === "in-person" ? "现场有几个人说话（包括你）" : "对方有几个人说话（不包括你）"}
           </p>
           <div className="flex flex-wrap gap-1.5">

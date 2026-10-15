@@ -22,7 +22,7 @@ const TIMEOUT: Duration = Duration::from_secs(600);
 fn http() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
-        reqwest::Client::builder().connect_timeout(Duration::from_secs(15)).timeout(TIMEOUT).build().expect("HTTP client")
+        crate::net::public().connect_timeout(Duration::from_secs(15)).timeout(TIMEOUT).build().expect("HTTP client")
     })
 }
 

@@ -12,7 +12,8 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "desktop:package": "bash apps/desktop/scripts/package.sh"
+    "desktop:package": "bash apps/desktop/scripts/package.sh",
+    "android:build": "bash apps/desktop/scripts/android.sh"
   },
   "packageManager": "pnpm@11.18.0",
   "devDependencies": {

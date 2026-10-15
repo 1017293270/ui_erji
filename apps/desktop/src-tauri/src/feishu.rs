@@ -134,7 +134,7 @@ pub(crate) fn now() -> u64 {
 pub(crate) fn http() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
-        reqwest::Client::builder().timeout(Duration::from_secs(20)).build().expect("HTTP client")
+        crate::net::public().timeout(Duration::from_secs(20)).build().expect("HTTP client")
     })
 }
 
@@ -182,7 +182,10 @@ pub(crate) async fn authorize(app: &AppHandle, app_id: &str, scopes: &str) -> Re
         ],
     )
     .map_err(|e| e.to_string())?;
+    #[cfg(desktop)]
     crate::open_external(url.as_str()).map_err(|e| format!("无法打开浏览器：{e}"))?;
+    #[cfg(mobile)]
+    crate::mobile::open_url(app, url.as_str()).await?;
 
     let code = tokio::select! {
         result = receive_code(listener, state) => result?,

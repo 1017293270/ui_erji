@@ -217,14 +217,14 @@ pub(crate) async fn meeting_voices(app: &AppHandle, meeting_id: &str) -> Result<
     }
 }
 
-/// The transcript, from `transcript.json` if an earlier run finished (and nothing new is
-/// asked for in `hints`), otherwise from the sidecar. A new run replaces the file only once
+/// The transcript, from `transcript.json` if an earlier run heard someone (and nothing new
+/// is asked for in `hints`), otherwise from the sidecar. A new run replaces the file only once
 /// it succeeds.
 async fn transcribe(app: &AppHandle, id: &str, dir: &Path, hints: &[String]) -> Result<Value, (String, String)> {
     let saved = dir.join(TRANSCRIPT_FILE);
     let earlier = hints.is_empty().then(|| std::fs::read(&saved).ok()).flatten();
     if let Some(transcript) = earlier.and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
-        if transcript["segments"].is_array() {
+        if transcript["segments"].as_array().is_some_and(|s| !s.is_empty()) {
             return Ok(transcript);
         }
     }

@@ -6,8 +6,9 @@ AI 会议纪要助手。开会时在电脑上同时录两路声音（麦克风 =
 
 | 路径 | 内容 |
 | --- | --- |
-| `apps/desktop` | 桌面端（Tauri 2 + React 19 + Tailwind 4），界面和手绘插画都在这里 |
+| `apps/desktop` | 桌面端（Tauri 2 + React 19 + Tailwind 4），界面和手绘插画都在这里；安卓 App 也从这里打包 |
 | `apps/desktop/src-tauri` | Rust 外壳：主窗口、录音浮窗、菜单栏图标、两个 sidecar、会议存储、飞书与 DeepSeek 代理（密钥不进网页） |
+| `apps/desktop/src-tauri/gen/android` | 安卓工程：录音前台服务、模型解包（Kotlin，`app/src/main/java/com/evanbyte/echomind`） |
 | `native/macos-capture` | macOS 双轨采集命令行 `echomind-capture`（Swift，Core Audio Process Tap） |
 | `native/transcriber` | 本机转写 `echomind-transcribe`（Rust + sherpa-onnx：SenseVoice、VAD、说话人分离），录音不出电脑 |
 | `packages/minutes-engine` | 纪要引擎：DeepSeek 调用、证据校验、负责人与截止日期解析 |
@@ -31,6 +32,23 @@ pnpm tauri dev           # 启动桌面端
 ```bash
 pnpm typecheck && pnpm test
 ```
+
+## 手机端（安卓）
+
+第一版只做面对面开会：手机放在桌上录音，在手机上转写，生成纪要，确认待办后推到飞书。手机上只有在这台手机上录的会议，录音和逐字稿不备份、不同步。界面和桌面端是同一套代码，手机上换成 `src/mobile` 里的页面；Rust 里手机专用的部分在 `src-tauri/src/mobile`。
+
+需要 Android Studio（含 SDK 和 NDK 27）和 JDK 17（`brew install openjdk@17`）。
+
+```bash
+pnpm android:build             # 调试版，连着手机或模拟器时直接装上去
+pnpm android:build --release   # 正式版，还没有签名，不能直接发给别人
+```
+
+- 语音模型（约 270 MB）打进安装包，第一次打开时解压到应用的数据目录。打包前 `src-tauri/resources/models` 里没有模型时，脚本会从这台 Mac 的 EchoMind 数据目录复制。
+- 录音在前台服务里进行，锁屏、切到别的应用、从最近任务里划掉都不停（划掉后再打开，页面接着显示正在进行的录音）；来电占用麦克风时自动暂停，挂断后继续。录完后服务继续留在前台，直到转写和纪要做完，因为安卓会冻结后台应用、切断它的网络。
+- 应用不在时结束的录音（从通知栏结束），或者被系统中途停掉的录音，下次打开 EchoMind 时自动补成会议并开始转写。
+- 回放走应用自己在 127.0.0.1 上开的小服务（路径带随机口令），因为安卓的 WebView 不能用自定义协议按位置读取录音。
+- 调试时可以在 Chrome 打开 `chrome://inspect` 查看手机里的页面。只改界面时，`pnpm dev` 加浏览器的手机尺寸模拟（User-Agent 要是安卓或 iPhone）就能看到手机版页面。
 
 ## 纪要引擎（DeepSeek）
 
@@ -56,4 +74,4 @@ pnpm minutes --fixture --out minutes-result.json
 
 ## 插画
 
-插画全部是代码画的 SVG（`packages/ui/src/art`），走 Claude 风格：墨色线条，陶土色 `#D97757` 是唯一的强调色，深色模式下变成粉笔效果。系统设置为「减少动态效果」时，插画直接显示画完的样子。应用图标的源文件在 `apps/desktop/src-tauri/icons/source/`，改完后运行 `pnpm tauri icon src-tauri/icons/source/app-icon.svg -o src-tauri/icons` 重新生成。
+插画全部是代码画的 SVG（`packages/ui/src/art`），走 Claude 风格：墨色线条，陶土色 `#D97757` 是唯一的强调色，深色模式下变成粉笔效果。系统设置为「减少动态效果」时，插画直接显示画完的样子。应用图标的源文件在 `apps/desktop/src-tauri/icons/source/`，改完后运行 `pnpm tauri icon src-tauri/icons/source/app-icon.svg -o src-tauri/icons` 重新生成。安卓图标是浅米色底加 EchoMark（`android-bg.svg`、`android-fg.svg`，清单 `android.json`），用 `pnpm tauri icon $PWD/src-tauri/icons/source/android.json -o <临时目录>` 生成后，把其中的 `android/` 复制到 `src-tauri/gen/android/app/src/main/res`。

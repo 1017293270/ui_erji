@@ -20,7 +20,7 @@ import { applyTheme, cn, EchoMark, MicDoodle } from "@echomind/ui";
 import { href, navigate, useLocation, type Route } from "../lib/router";
 import { useStore } from "../lib/store";
 import { openPrivacySettings, sendCapture, startCapture } from "../lib/native";
-import { isMac, isWindows } from "../lib/platform";
+import { isMac, isMobile, isWindows } from "../lib/platform";
 import { Avatar, Button, IconButton, Kbd, sourceLabel } from "./ui";
 import { FeishuAvatar } from "./Feishu";
 
@@ -230,7 +230,7 @@ function DetectedBanner() {
   );
 }
 
-function Toasts() {
+export function Toasts() {
   const { toasts, dispatch } = useStore();
   useEffect(() => {
     if (!toasts.length) return;
@@ -239,7 +239,7 @@ function Toasts() {
   }, [toasts, dispatch]);
 
   return (
-    <div className="pointer-events-none fixed right-5 bottom-5 z-50 flex w-[360px] flex-col gap-2" aria-live="polite">
+    <div className="pointer-events-none fixed right-5 bottom-5 z-50 flex w-[360px] flex-col gap-2 max-sm:inset-x-3 max-sm:bottom-3 max-sm:w-auto" aria-live="polite">
       {toasts.map((t) => (
         <div
           key={t.id}
@@ -258,7 +258,7 @@ function Toasts() {
             <p className="leading-relaxed">{t.text}</p>
             {t.settings ? (
               <Button size="sm" className="mt-2" onClick={() => void openPrivacySettings(t.settings!)}>
-                {isWindows ? "打开设置" : "打开系统设置"}
+                {isWindows || isMobile ? "打开设置" : "打开系统设置"}
               </Button>
             ) : null}
           </div>

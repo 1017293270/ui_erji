@@ -20,9 +20,11 @@ import {
   type ModelsStatus,
   type PrivacySettings,
   type ServerVoiceprint,
+  type UnsavedRecording,
 } from "./native";
 import { selfMention } from "@echomind/minutes-engine";
 import { createProcessor, newMeetingTitle, type Job, type Processor } from "./process";
+import { isMobile } from "./platform";
 
 /**
  * App state. In the desktop app it is the real thing: meetings load from the
@@ -119,6 +121,7 @@ export type Action =
   | { type: "setVoiceprint"; personId: string; voiceprint: Voiceprint }
   | { type: "voiceprints"; voiceprints: Record<string, Voiceprint> }
   | { type: "capture"; event: CaptureEvent; keepMeeting: boolean }
+  | { type: "recovered"; recordings: UnsavedRecording[] }
   | { type: "detected"; meeting: DetectedMeeting | null }
   | { type: "testing"; on: boolean }
   | { type: "settings"; patch: Partial<Settings> }
@@ -239,7 +242,8 @@ function onCapture(state: State, event: CaptureEvent, keepMeeting: boolean): Sta
           system: -90,
           marks: [],
           micDevice: event.mic?.device ?? undefined,
-          source: state.detected ? SOURCE_OF[state.detected.app] : "other",
+          // A phone records the room it is in.
+          source: isMobile ? "offline" : state.detected ? SOURCE_OF[state.detected.app] : "other",
           dir: event.out,
         },
       };
@@ -269,23 +273,29 @@ function onCapture(state: State, event: CaptureEvent, keepMeeting: boolean): Sta
       if (!rec) return state;
       const stopped = { ...state, recording: null, testing: false };
       if (!keepMeeting || state.testing) return stopped;
-      const meeting: Meeting = {
-        id: folderName(rec.dir) ?? `m-${Date.parse(rec.startedAt)}`,
-        title: newMeetingTitle(rec.startedAt),
-        source: rec.source,
-        status: "transcribing",
-        startedAt: rec.startedAt,
-        durationMs: event.durationMs,
-        recorderId: state.me,
-        participantIds: [state.me],
-        marks: rec.marks,
-      };
+      const id = folderName(rec.dir) ?? `m-${Date.parse(rec.startedAt)}`;
+      const meeting = recorded(state, { id, startedAt: rec.startedAt, durationMs: event.durationMs, marks: rec.marks }, rec.source);
       const text = LIVE ? "录音已保存，正在本机转写。" : "录音已保存。转写服务接入后会自动生成纪要。";
       return withToast({ ...stopped, meetings: [meeting, ...state.meetings.filter((m) => m.id !== meeting.id)] }, text, "success");
     }
     default:
       return state;
   }
+}
+
+/** A meeting for a recording made on this device; it is processed from "transcribing" on. */
+function recorded(state: State, r: UnsavedRecording, source: Meeting["source"]): Meeting {
+  return {
+    id: r.id,
+    title: newMeetingTitle(r.startedAt),
+    source,
+    status: "transcribing",
+    startedAt: r.startedAt,
+    durationMs: r.durationMs,
+    recorderId: state.me,
+    participantIds: [state.me],
+    marks: r.marks,
+  };
 }
 
 function withToast(state: State, text: string, tone: Toast["tone"] = "default", settings?: PrivacySettings): State {
@@ -376,6 +386,13 @@ function reducer(state: State, action: Action): State {
       const todos = [...state.todos.filter((t) => !ids.has(t.meetingId)), ...action.meetings.flatMap(todosOf)];
       const people = withSelf(action.people ?? state.people, state.me, state.feishu);
       return { ...state, meetings, todos, people, loaded: true };
+    }
+    case "recovered": {
+      // Only meetings recorded on the phone come back this way, so they were in the room.
+      const found = action.recordings.filter((r) => !state.meetings.some((m) => m.id === r.id));
+      if (!found.length) return state;
+      const meetings = [...found.map((r) => recorded(state, r, "offline")), ...state.meetings];
+      return withToast({ ...state, meetings }, `找回了 ${found.length} 场上次没来得及保存的录音，正在转写。`, "success");
     }
     case "directory":
       return { ...state, people: withSelf(action.people, state.me, state.feishu) };
@@ -511,7 +528,7 @@ export function StoreProvider({ children, recorderWindow = false }: { children: 
   // Watch for Tencent Meeting / Feishu calls so we can offer to record them.
   const autoDetect = state.settings.autoDetect;
   useEffect(() => {
-    if (!isTauri || !autoDetect || recorderWindow) return;
+    if (!isTauri || !autoDetect || recorderWindow || isMobile) return;
     let alive = true;
     const poll = async () => {
       try {

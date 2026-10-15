@@ -14,6 +14,7 @@ import {
   type TranscribeHints,
   type TranscribeStage,
 } from "./native";
+import { isMobile } from "./platform";
 import type { Action, State } from "./store";
 
 /**
@@ -110,7 +111,8 @@ export function createProcessor({ get, dispatch }: { get: () => State; dispatch:
 
       // State read through get() lags a dispatch until React renders, so the meeting travels along here.
       let meeting = before;
-      if (!meeting.transcript || hints) {
+      // A transcript without a word is tried again: the recording may have been put right.
+      if (!meeting.transcript?.segments.length || hints) {
         const models = await transcribeModels();
         dispatch({ type: "models", status: models });
         if (!models?.ready) {
@@ -130,10 +132,19 @@ export function createProcessor({ get, dispatch }: { get: () => State; dispatch:
       }
 
       if (!meeting.transcript?.segments.length) {
-        throw new Error("录音里没有识别到说话声。确认麦克风和系统录音权限都打开了，再录一次。");
+        throw new Error(
+          isMobile
+            ? "录音里没有识别到说话声。确认 EchoMind 有麦克风权限、录音时麦克风没被别的应用占着，再录一次。"
+            : "录音里没有识别到说话声。确认麦克风和系统录音权限都打开了，再录一次。",
+        );
       }
 
       step = "minutes";
+      // Through the server, the minutes are written for a signed-in user only.
+      const feishu = get().feishu;
+      if (feishu?.server && !feishu.user) {
+        throw new Error(`生成纪要要先登录飞书：${isMobile ? "到「我的」" : "在「设置」"}里用飞书登录，再点重试。`);
+      }
       setJob(id, { step, stage: "attendees", progress: 0 });
       const calendar = await attendees(meeting);
       const titled = !isDefaultTitle(meeting) ? meeting.title : calendar?.eventTitle;
@@ -182,11 +193,11 @@ export function createProcessor({ get, dispatch }: { get: () => State; dispatch:
     try {
       await transcribeDownload();
       const models = await refreshModels();
-      if (!models?.ready) throw new Error("下载完成了，但模型文件校验没有通过。请再试一次。");
+      if (!models?.ready) throw new Error(`${isMobile ? "安装" : "下载"}完成了，但模型文件校验没有通过。请再试一次。`);
       toast("语音模型已就绪，开始转写。", "success");
       for (const [id, job] of Object.entries(get().jobs)) if (job.step === "models") void run(id);
     } catch (e) {
-      toast(`模型下载失败：${message(e)}`, "error");
+      toast(`模型${isMobile ? "安装" : "下载"}失败：${message(e)}`, "error");
     } finally {
       stop();
       dispatch({ type: "download", progress: null });

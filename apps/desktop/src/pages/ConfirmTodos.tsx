@@ -64,7 +64,7 @@ export function ConfirmTodos({ id }: { id: string }) {
   };
 
   return (
-    <div className="mx-auto max-w-[960px] px-10 pt-7 pb-32">
+    <div className="mx-auto max-w-[960px] px-10 pt-7 pb-32 max-sm:px-4 max-sm:pb-44">
       <a href={href(`/meetings/${id}`)} className="inline-flex items-center gap-1 text-[12.5px] text-muted-foreground hover:text-foreground">
         <ArrowLeft className="size-3.5" aria-hidden /> {meeting.title}
       </a>
@@ -97,9 +97,9 @@ export function ConfirmTodos({ id }: { id: string }) {
         ))}
       </div>
 
-      <div className="fixed right-0 bottom-0 left-[232px] border-t border-border bg-background/92 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-[960px] items-center gap-4 px-10 py-3.5">
-          <p className="flex-1 text-[13px] text-muted-foreground">
+      <div className="fixed right-0 bottom-0 left-[232px] border-t border-border bg-background/92 backdrop-blur-sm max-sm:left-0">
+        <div className="mx-auto flex max-w-[960px] items-center gap-4 px-10 py-3.5 max-sm:flex-wrap max-sm:gap-x-2 max-sm:gap-y-2.5 max-sm:px-4">
+          <p className="flex-1 text-[13px] text-muted-foreground max-sm:basis-full">
             将推送 <span className="num font-medium text-foreground">{internal}</span> 项到飞书任务
             {external.length ? (
               <>
@@ -111,7 +111,7 @@ export function ConfirmTodos({ id }: { id: string }) {
             {signIn ? <span className="block text-clay-text">{feishu.error ?? signIn}</span> : null}
           </p>
           {signIn ? (
-            <Button variant="outline" disabled={feishu.busy} onClick={() => void feishu.login()}>
+            <Button variant="outline" className="max-sm:basis-full" disabled={feishu.busy} onClick={() => void feishu.login()}>
               {feishu.busy ? "等待授权…" : "登录飞书"}
             </Button>
           ) : null}
@@ -121,6 +121,7 @@ export function ConfirmTodos({ id }: { id: string }) {
           <Button
             variant="primary"
             size="lg"
+            className="max-sm:flex-1"
             disabled={!chosen.length || missingOwner.length > 0 || !!signIn || pushing}
             onClick={() => void push()}
             icon={<Send className="size-4" />}
@@ -159,9 +160,9 @@ function DraftCard({
   const people = [...store.people].sort((a, b) => Number(participantIds.includes(b.id)) - Number(participantIds.includes(a.id)));
 
   return (
-    <article className={cn("card px-5 py-4", skipped && "bg-transparent")}>
-      <div className="flex items-start gap-4">
-        <span className="serif num mt-0.5 w-5 shrink-0 text-[17px] text-subtle">{index}</span>
+    <article className={cn("card px-5 py-4 max-sm:px-4", skipped && "bg-transparent")}>
+      <div className="flex items-start gap-4 max-sm:gap-2">
+        <span className="serif num mt-0.5 w-5 shrink-0 text-[17px] text-subtle max-sm:w-3.5">{index}</span>
         {/* Only the content fades when skipped; the restore button stays readable. */}
         <div className={cn("min-w-0 flex-1 transition-opacity", skipped && "opacity-45")}>
           <input
@@ -173,7 +174,7 @@ function DraftCard({
           />
           {todo.detail ? <p className="mt-0.5 text-[12.5px] leading-relaxed text-muted-foreground">{todo.detail}</p> : null}
 
-          <div className="mt-3.5 grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-3">
+          <div className="mt-3.5 grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-3 max-sm:grid-cols-1">
             <label className="block">
               <span className="mb-1.5 flex items-center gap-2 text-[12px] text-muted-foreground">
                 负责人

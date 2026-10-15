@@ -1,6 +1,7 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Meeting, Person, Scene, Transcript } from "@echomind/shared";
+import { isMobile } from "./platform";
 
 /**
  * The bridge to the native side. Inside the Tauri app, recording runs in the
@@ -53,6 +54,32 @@ export async function startCapture(): Promise<void> {
     return;
   }
   simulator.start();
+}
+
+/** The phone only: a recording keeps going while the app is closed, and is picked up here (`marks` in ms). */
+export type CaptureStatus = { recording: false } | { recording: true; startedAt: string; out: string; elapsedMs: number; paused: boolean; marks: number[] };
+
+export async function captureStatus(): Promise<CaptureStatus> {
+  if (!isTauri) return { recording: false };
+  return invoke<CaptureStatus>("capture_status");
+}
+
+/** The phone only: a recording that ended while the app was closed, or was cut short, with no meeting yet. */
+export type UnsavedRecording = { id: string; startedAt: string; durationMs: number; marks: number[] };
+
+/** `live`: the folder of the recording going on now, left alone. */
+export async function unsavedRecordings(live: string | null): Promise<UnsavedRecording[]> {
+  return isTauri && isMobile ? invoke<UnsavedRecording[]>("unsaved_recordings", { live }) : [];
+}
+
+/** The phone only: keeps the app running and online in the background while a meeting is processed. */
+export async function keepWorking(active: boolean): Promise<void> {
+  if (isTauri && isMobile) await invoke("keep_working", { active });
+}
+
+/** Where the player streams a meeting's recording from (playback.rs; on the phone, mobile/playback.rs). */
+export async function recordingUrl(meetingId: string): Promise<string> {
+  return isMobile ? invoke<string>("playback_url", { meetingId }) : convertFileSrc(meetingId, "echomind-audio");
 }
 
 export async function sendCapture(command: CaptureCommand): Promise<void> {

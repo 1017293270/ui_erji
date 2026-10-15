@@ -95,6 +95,33 @@ fn list_in(dir: &Path) -> Vec<Value> {
     meetings.into_iter().map(|(_, meeting)| meeting).collect()
 }
 
+/// Recordings that never became a meeting, because the app was gone when they ended (on the
+/// phone a recording outlives the app) or the system stopped them halfway: folders with saved
+/// audio in manifest.json and no meeting.json, other than `live`, the one being recorded now.
+/// Each as `{id, startedAt, durationMs, marks}`; one stopped halfway lasts to its last whole segment.
+#[cfg(any(mobile, test))]
+pub(crate) fn unsaved_in(dir: &Path, live: Option<&str>) -> Vec<Value> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let id = entry.file_name().into_string().ok().filter(|id| valid_id(id) && live != Some(id.as_str()))?;
+            if entry.path().join(MEETING_FILE).exists() {
+                return None;
+            }
+            let manifest: Value = serde_json::from_slice(&std::fs::read(entry.path().join("manifest.json")).ok()?).ok()?;
+            let end = manifest["segments"].as_array()?.last()?["endMs"].as_u64()?;
+            let marks: Vec<u64> = manifest["marks"].as_array().into_iter().flatten().filter_map(|m| m["atMs"].as_u64()).collect();
+            Some(serde_json::json!({
+                "id": id,
+                "startedAt": manifest["startedAt"].as_str()?,
+                "durationMs": manifest["durationMs"].as_u64().unwrap_or(end),
+                "marks": marks,
+            }))
+        })
+        .collect()
+}
+
 /// One meeting's meeting.json, if it is there and readable.
 pub(crate) fn read_meeting(app: &AppHandle, id: &str) -> Option<Value> {
     if !valid_id(id) {
@@ -193,6 +220,35 @@ mod tests {
         let ids: Vec<_> = list.iter().map(|m| m["id"].as_str().unwrap()).collect();
         assert_eq!(ids, ["rec-2", "rec-1", "rec-3", "rec-7"]);
         assert_eq!(list[1]["title"], "改过的标题");
+    }
+
+    #[test]
+    fn unsaved_recordings_are_found() {
+        let dir = TempDir::new();
+        let manifest = |id: &str, text: &str| {
+            std::fs::create_dir_all(dir.0.join(id)).unwrap();
+            std::fs::write(dir.0.join(id).join("manifest.json"), text).unwrap();
+        };
+        let segment = r#"{"index":1,"startMs":0,"endMs":60000,"mic":"mic-0001.wav"}"#;
+        manifest("rec-1", &format!(r#"{{"startedAt":"2026-10-15T01:00:00Z","status":"stopped","durationMs":61000,"segments":[{segment}],"marks":[{{"atMs":500}}]}}"#));
+        // Stopped halfway: no duration yet.
+        manifest("rec-2", &format!(r#"{{"startedAt":"2026-10-15T02:00:00Z","status":"recording","durationMs":null,"segments":[{segment}]}}"#));
+        // Not wanted: saved already, recording now, no audio (the microphone never opened), damaged.
+        manifest("rec-3", &format!(r#"{{"startedAt":"2026-10-15T03:00:00Z","status":"stopped","segments":[{segment}]}}"#));
+        std::fs::write(dir.0.join("rec-3/meeting.json"), b"{}").unwrap();
+        manifest("rec-4", &format!(r#"{{"startedAt":"2026-10-15T04:00:00Z","status":"recording","segments":[{segment}]}}"#));
+        manifest("rec-5", r#"{"startedAt":"2026-10-15T05:00:00Z","status":"stopped","durationMs":0,"segments":[]}"#);
+        manifest("rec-6", "{ half");
+
+        let mut found = unsaved_in(&dir.0, Some("rec-4"));
+        found.sort_by_key(|r| r["id"].as_str().unwrap().to_string());
+        assert_eq!(
+            found,
+            [
+                json!({ "id": "rec-1", "startedAt": "2026-10-15T01:00:00Z", "durationMs": 61000, "marks": [500] }),
+                json!({ "id": "rec-2", "startedAt": "2026-10-15T02:00:00Z", "durationMs": 60000, "marks": [] }),
+            ]
+        );
     }
 
     #[test]

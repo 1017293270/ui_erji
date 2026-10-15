@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Meeting, Segment, Speaker } from "@echomind/shared";
+import { recordingUrl } from "../../lib/native";
+import { isMobile } from "../../lib/platform";
 import { LIVE, useStore } from "../../lib/store";
 
 /**
@@ -29,7 +30,18 @@ type Detail = {
 
 const Ctx = createContext<Detail | null>(null);
 
-export function DetailProvider({ meeting, initialSegment, children }: { meeting: Meeting; initialSegment?: string | null; children: ReactNode }) {
+/** `onJump` runs before jumping to a line: the phone shows the transcript tab first. */
+export function DetailProvider({
+  meeting,
+  initialSegment,
+  onJump,
+  children,
+}: {
+  meeting: Meeting;
+  initialSegment?: string | null;
+  onJump?: () => void;
+  children: ReactNode;
+}) {
   const store = useStore();
   const segments = useMemo(() => meeting.transcript?.segments ?? [], [meeting.transcript]);
   const speakers = useMemo(() => new Map((meeting.transcript?.speakers ?? []).map((s) => [s.id, s])), [meeting.transcript]);
@@ -38,16 +50,27 @@ export function DetailProvider({ meeting, initialSegment, children }: { meeting:
   const [speed, setSpeed] = useState(1);
   const [flash, setFlash] = useState<Detail["flash"]>(null);
   const lines = useRef(new Map<string, HTMLElement>());
+  /** A line jumped to before it was on screen, scrolled to once it is. */
+  const pending = useRef<string | null>(null);
+  // Callers pass a new onJump on every render; jumping does not change with it.
+  const onJumpLatest = useRef(onJump);
+  onJumpLatest.current = onJump;
 
   // In the app the recording plays (playback.rs mixes both tracks); the playhead follows it.
   const audio = useRef<HTMLAudioElement | null>(null);
   const missing = useRef(false);
   useEffect(() => {
     if (!LIVE) return;
-    const a = new Audio(convertFileSrc(meeting.id, "echomind-audio"));
+    const a = new Audio();
     a.preload = "metadata";
     audio.current = a;
     missing.current = false;
+    recordingUrl(meeting.id).then(
+      (url) => {
+        if (audio.current === a) a.src = url;
+      },
+      () => (missing.current = true),
+    );
     let frame = 0;
     const follow = () => {
       setCurrentMs(a.currentTime * 1000);
@@ -96,7 +119,7 @@ export function DetailProvider({ meeting, initialSegment, children }: { meeting:
   const play = useCallback(() => {
     const a = audio.current;
     if (!a) return setPlaying(true);
-    if (missing.current) return store.toast("这场会议的录音文件不在这台电脑上了，只能看文字稿。", "error");
+    if (missing.current) return store.toast(`这场会议的录音文件不在这台${isMobile ? "手机" : "电脑"}上了，只能看文字稿。`, "error");
     a.playbackRate = speed;
     a.play().catch((e: unknown) => store.toast(`播放失败：${String(e)}`, "error"));
   }, [store, speed]);
@@ -135,16 +158,22 @@ export function DetailProvider({ meeting, initialSegment, children }: { meeting:
       if (!seg) return;
       seek(seg.start);
       setFlash((f) => ({ id, n: (f?.n ?? 0) + 1 }));
-      lines.current.get(id)?.scrollIntoView({ block: "center", behavior: "smooth" });
+      onJumpLatest.current?.();
+      const line = lines.current.get(id);
+      if (line) line.scrollIntoView({ block: "center", behavior: "smooth" });
+      else pending.current = id;
     },
     [segments, seek],
   );
 
+  // The line a link points at, once per meeting and link: not again when the transcript changes.
+  const jumpLatest = useRef(jump);
+  jumpLatest.current = jump;
   useEffect(() => {
     if (!initialSegment) return;
-    const t = setTimeout(() => jump(initialSegment), 120);
+    const t = setTimeout(() => jumpLatest.current(initialSegment), 120);
     return () => clearTimeout(t);
-  }, [initialSegment, jump]);
+  }, [meeting.id, initialSegment]);
 
   const value = useMemo<Detail>(
     () => ({
@@ -173,6 +202,10 @@ export function DetailProvider({ meeting, initialSegment, children }: { meeting:
       registerLine: (id, el) => {
         if (el) lines.current.set(id, el);
         else lines.current.delete(id);
+        if (el && pending.current === id) {
+          pending.current = null;
+          requestAnimationFrame(() => el.scrollIntoView({ block: "center" }));
+        }
       },
       segmentAt,
     }),

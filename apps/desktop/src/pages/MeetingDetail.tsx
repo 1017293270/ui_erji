@@ -6,6 +6,7 @@ import { Clipboard, cn, InboxTray, SearchArt } from "@echomind/ui";
 import { Avatar, Button, MeetingStatusBadge, SourceTag } from "../components/ui";
 import { href, navigate, useLocation } from "../lib/router";
 import { revealRecordings } from "../lib/native";
+import { isMobile } from "../lib/platform";
 import { formatBytes, STAGE_LABEL, type Job } from "../lib/process";
 import { LIVE, useStore } from "../lib/store";
 import { DetailProvider } from "./meeting/context";
@@ -136,7 +137,7 @@ function stepOf(job: Job | undefined): number {
 }
 
 /** A recorded meeting on its way to minutes: transcribed here, summarized by DeepSeek. */
-function Processing({ meeting }: { meeting: Meeting }) {
+export function Processing({ meeting }: { meeting: Meeting }) {
   const store = useStore();
   const job = store.jobs[meeting.id];
 
@@ -146,7 +147,7 @@ function Processing({ meeting }: { meeting: Meeting }) {
     return (
       <Centered art={<SearchArt className="w-[90px]" />} title={title} text={text}>
         <div className="flex gap-2">
-          <Button onClick={() => void revealRecordings()}>打开录音文件夹</Button>
+          {isMobile ? null : <Button onClick={() => void revealRecordings()}>打开录音文件夹</Button>}
           <Button variant="primary" icon={<RefreshCw className="size-4" />} onClick={() => store.process(meeting.id)}>
             重试
           </Button>
@@ -161,11 +162,15 @@ function Processing({ meeting }: { meeting: Meeting }) {
     return (
       <Centered
         art={<InboxTray className="w-[180px]" />}
-        title="先下载语音识别模型"
-        text={`转写全部在这台电脑上完成，录音不会上传。第一次使用需要下载${size ? `约 ${formatBytes(size)} ` : ""}的模型，之后不用再下。`}
+        title={isMobile ? "先安装语音识别模型" : "先下载语音识别模型"}
+        text={
+          isMobile
+            ? "转写全部在这台手机上完成，录音不会上传。第一次使用要把安装包里的模型解压出来，只需要一次。"
+            : `转写全部在这台电脑上完成，录音不会上传。第一次使用需要下载${size ? `约 ${formatBytes(size)} ` : ""}的模型，之后不用再下。`
+        }
       >
         {download ? (
-          <div className="w-[320px]">
+          <div className="w-full max-w-[320px]">
             <Bar value={download.total ? download.received / download.total : 0} />
             <p className="num mt-2 text-[12px] text-muted-foreground">
               {formatBytes(download.received)}
@@ -174,7 +179,7 @@ function Processing({ meeting }: { meeting: Meeting }) {
           </div>
         ) : (
           <Button variant="primary" icon={<Download className="size-4" />} onClick={() => void store.downloadModels()}>
-            下载模型
+            {isMobile ? "安装模型" : "下载模型"}
           </Button>
         )}
       </Centered>
@@ -183,21 +188,22 @@ function Processing({ meeting }: { meeting: Meeting }) {
 
   const current = stepOf(job);
   return (
-    <Centered art={<InboxTray className="w-[180px]" />} title="正在整理这场会议" text="转写在这台电脑上完成，录音不离开本机；DeepSeek 只读文字稿，写出纪要和待办。">
+    <Centered art={<InboxTray className="w-[180px]" />} title="正在整理这场会议" text={`转写在这台${isMobile ? "手机" : "电脑"}上完成，录音不离开本机；DeepSeek 只读文字稿，写出纪要和待办。`}>
       <ol className="mt-1 flex items-center gap-2 text-[12.5px] text-muted-foreground">
         {STEPS.map((s, i) => (
           <li key={s} className="flex items-center gap-2">
             {i > 0 ? <span className="h-px w-5 bg-border" /> : null}
-            <span className={i <= current ? "text-foreground" : undefined}>
+            <span className={cn("whitespace-nowrap", i <= current && "text-foreground")}>
               <span className={cn("num mr-1.5 inline-grid size-5 place-items-center rounded-full text-[11px]", i < current ? "bg-clay-soft text-clay-text" : "bg-secondary")}>
                 {i < current ? <Check className="size-3" strokeWidth={2.4} aria-hidden /> : i + 1}
               </span>
-              {s}
+              {/* A phone has room for the current step's name only. */}
+              <span className={cn(i !== current && "max-sm:sr-only")}>{s}</span>
             </span>
           </li>
         ))}
       </ol>
-      <div className="mt-4 w-[320px]">
+      <div className="mt-4 w-full max-w-[320px]">
         <Bar value={job?.progress ?? 0} />
         <p className="mt-2 text-[12px] text-muted-foreground" aria-live="polite">
           {job?.stage ? STAGE_LABEL[job.stage] : "排队中"}
