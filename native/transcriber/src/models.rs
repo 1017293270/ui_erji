@@ -8,6 +8,9 @@
 //! returning an error. Downloads go to `models_dir/.downloads/<file>.part` and
 //! resume after a failure.
 
+// Without the `download` feature (the phone app ships the models) the download code is left out.
+#![cfg_attr(not(feature = "download"), allow(dead_code, unused_imports))]
+
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -196,6 +199,7 @@ pub(crate) fn ensure(models_dir: &Path, specs: &[&Spec]) -> Result<()> {
     ))
 }
 
+#[cfg(feature = "download")]
 /// Downloads, verifies and unpacks every model that is not ready yet.
 /// `on_progress(received, total)` counts bytes across all of them.
 pub fn download_models(models_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut(u64, u64)) -> Result<()> {
@@ -228,6 +232,7 @@ pub fn download_models(models_dir: &Path, cancel: &AtomicBool, mut on_progress: 
     Ok(())
 }
 
+#[cfg(feature = "download")]
 /// Downloads one file (resuming a `.part`) and checks its size and sha256.
 fn fetch(
     client: &reqwest::blocking::Client,
@@ -311,6 +316,7 @@ fn fetch(
     Ok(part)
 }
 
+#[cfg(feature = "download")]
 fn network_error(spec: &Spec, e: &reqwest::Error) -> Error {
     let detail = if e.is_connect() || e.is_timeout() { "无法连接到下载服务器" } else { "网络错误" };
     Error::new(ErrorKind::Download, format!("下载{}失败：{detail}（{e}）。请检查网络连接后重试。", spec.name))
@@ -323,6 +329,7 @@ fn sha256_file(path: &Path) -> Result<String> {
     Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
+#[cfg(feature = "download")]
 /// Unpacks into `<id>.tmp`, then swaps it in, so a crash never leaves a half model marked ready.
 fn install(spec: &Spec, archive: &Path, models_dir: &Path) -> Result<()> {
     let dir = spec.dir(models_dir);
@@ -367,6 +374,7 @@ fn install(spec: &Spec, archive: &Path, models_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "download")]
 fn unpack_error(spec: &Spec, e: io::Error) -> Error {
     if e.kind() == io::ErrorKind::StorageFull {
         return Error::io("解压模型", e);

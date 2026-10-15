@@ -13,6 +13,13 @@ name = "echomind_transcriber"
 [[bin]]
 name = "echomind-transcribe"
 path = "src/bin/echomind-transcribe.rs"
+required-features = ["download"]
+
+[features]
+default = ["download"]
+# Fetching the models. The phone app ships them inside the package and leaves this out,
+# and a TLS stack with it.
+download = ["dep:reqwest", "dep:bzip2", "dep:tar"]
 
 [dependencies]
 # Official bindings. The default `static` feature links prebuilt static sherpa-onnx +
@@ -22,9 +29,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 # Model downloads. Same TLS/proxy choices as apps/desktop: system TLS and system proxy.
-reqwest = { version = "0.13", default-features = false, features = ["native-tls", "blocking", "system-proxy"] }
-bzip2 = "0.6"
-tar = { version = "0.4", default-features = false }
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "blocking", "system-proxy"], optional = true }
+bzip2 = { version = "0.6", optional = true }
+tar = { version = "0.4", default-features = false, optional = true }
 
 # Models are re-hashed before every transcription; with `asm`, sha2 0.10 uses the ARM
 # SHA instructions (4x faster). On x86_64 it picks SHA-NI by itself.

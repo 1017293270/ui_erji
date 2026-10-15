@@ -70,6 +70,7 @@ pub fn model_status(models_dir: &Path) -> ModelStatus {
     models::model_status(models_dir)
 }
 
+#[cfg(feature = "download")]
 /// Downloads the missing models (about 200 MB) into `models_dir`, verifying each
 /// against its pinned sha256. Interrupted downloads resume on the next call.
 /// `on_progress(received, total)` is in bytes.
