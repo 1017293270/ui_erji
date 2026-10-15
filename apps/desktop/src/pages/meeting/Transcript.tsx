@@ -60,7 +60,7 @@ function useBlocks(segments: Segment[], chapters: Chapter[]): Block[] {
 
 export function TranscriptView({ chapters, onNameSpeaker }: { chapters: Chapter[]; onNameSpeaker: (speakerId: string) => void }) {
   const store = useStore();
-  const { segments, speakers, currentMs, seek, flash, registerLine, meeting } = useDetail();
+  const { segments, speakers, currentMs, playFrom, flash, registerLine, meeting } = useDetail();
   const blocks = useBlocks(segments, chapters);
   const [query, setQuery] = useState("");
   const playing = useMemo(() => {
@@ -130,7 +130,7 @@ export function TranscriptView({ chapters, onNameSpeaker }: { chapters: Chapter[
                       query={query.trim()}
                       flashN={flash?.id === s.id ? flash.n : 0}
                       marked={meeting.marks.some((m) => m >= s.start && m <= s.end)}
-                      onSeek={() => seek(s.start)}
+                      onSeek={() => playFrom(s.start)}
                       register={(el) => registerLine(s.id, el)}
                     />
                   ))}
@@ -196,8 +196,8 @@ function noise(i: number) {
 
 /**
  * The player: a waveform colored by who is talking, the marks made while
- * recording, and the playhead. The sample meeting has no audio file, so play
- * only moves the playhead.
+ * recording, and the playhead. In the app it plays the recording; the sample
+ * meeting has none, so play only moves the playhead.
  */
 function Player() {
   const { meeting, segmentAt, currentMs, playing, toggle, seek, speed, setSpeed } = useDetail();

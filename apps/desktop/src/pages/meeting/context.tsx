@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Meeting, Segment, Speaker } from "@echomind/shared";
+import { LIVE, useStore } from "../../lib/store";
 
 /**
  * What the panes of the meeting page share: the playhead, and a way to jump
@@ -16,6 +18,8 @@ type Detail = {
   /** Bumps on every jump so the same line can flash twice. */
   flash: { id: string; n: number } | null;
   seek: (ms: number) => void;
+  /** Seeks and plays. */
+  playFrom: (ms: number) => void;
   jump: (segmentId: string) => void;
   toggle: () => void;
   setSpeed: (s: number) => void;
@@ -26,6 +30,7 @@ type Detail = {
 const Ctx = createContext<Detail | null>(null);
 
 export function DetailProvider({ meeting, initialSegment, children }: { meeting: Meeting; initialSegment?: string | null; children: ReactNode }) {
+  const store = useStore();
   const segments = useMemo(() => meeting.transcript?.segments ?? [], [meeting.transcript]);
   const speakers = useMemo(() => new Map((meeting.transcript?.speakers ?? []).map((s) => [s.id, s])), [meeting.transcript]);
   const [currentMs, setCurrentMs] = useState(0);
@@ -34,9 +39,71 @@ export function DetailProvider({ meeting, initialSegment, children }: { meeting:
   const [flash, setFlash] = useState<Detail["flash"]>(null);
   const lines = useRef(new Map<string, HTMLElement>());
 
-  // The sample meeting has no audio file, so the playhead runs on a timer.
+  // In the app the recording plays (playback.rs mixes both tracks); the playhead follows it.
+  const audio = useRef<HTMLAudioElement | null>(null);
+  const missing = useRef(false);
   useEffect(() => {
-    if (!playing) return;
+    if (!LIVE) return;
+    const a = new Audio(convertFileSrc(meeting.id, "echomind-audio"));
+    a.preload = "metadata";
+    audio.current = a;
+    missing.current = false;
+    let frame = 0;
+    const follow = () => {
+      setCurrentMs(a.currentTime * 1000);
+      frame = requestAnimationFrame(follow);
+    };
+    const onPlay = () => {
+      setPlaying(true);
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(follow);
+    };
+    const onStop = () => {
+      setPlaying(false);
+      cancelAnimationFrame(frame);
+      setCurrentMs(a.currentTime * 1000);
+    };
+    const onError = () => {
+      missing.current = true;
+      onStop();
+    };
+    a.addEventListener("play", onPlay);
+    a.addEventListener("pause", onStop);
+    a.addEventListener("ended", onStop);
+    a.addEventListener("error", onError);
+    return () => {
+      cancelAnimationFrame(frame);
+      a.removeEventListener("play", onPlay);
+      a.removeEventListener("pause", onStop);
+      a.removeEventListener("ended", onStop);
+      a.removeEventListener("error", onError);
+      a.pause();
+      a.removeAttribute("src");
+      a.load();
+      audio.current = null;
+    };
+  }, [meeting.id]);
+
+  const seek = useCallback(
+    (ms: number) => {
+      const to = Math.max(0, Math.min(meeting.durationMs, ms));
+      setCurrentMs(to);
+      if (audio.current) audio.current.currentTime = to / 1000;
+    },
+    [meeting.durationMs],
+  );
+
+  const play = useCallback(() => {
+    const a = audio.current;
+    if (!a) return setPlaying(true);
+    if (missing.current) return store.toast("这场会议的录音文件不在这台电脑上了，只能看文字稿。", "error");
+    a.playbackRate = speed;
+    a.play().catch((e: unknown) => store.toast(`播放失败：${String(e)}`, "error"));
+  }, [store, speed]);
+
+  // The sample meeting has no recording, so its playhead runs on a timer.
+  useEffect(() => {
+    if (LIVE || !playing) return;
     const timer = setInterval(() => {
       setCurrentMs((ms) => {
         const next = ms + 100 * speed;
@@ -66,11 +133,11 @@ export function DetailProvider({ meeting, initialSegment, children }: { meeting:
     (id: string) => {
       const seg = segments.find((s) => s.id === id);
       if (!seg) return;
-      setCurrentMs(seg.start);
+      seek(seg.start);
       setFlash((f) => ({ id, n: (f?.n ?? 0) + 1 }));
       lines.current.get(id)?.scrollIntoView({ block: "center", behavior: "smooth" });
     },
-    [segments],
+    [segments, seek],
   );
 
   useEffect(() => {
@@ -88,17 +155,28 @@ export function DetailProvider({ meeting, initialSegment, children }: { meeting:
       playing,
       speed,
       flash,
-      seek: (ms) => setCurrentMs(Math.max(0, Math.min(meeting.durationMs, ms))),
+      seek,
+      playFrom: (ms) => {
+        seek(ms);
+        play();
+      },
       jump,
-      toggle: () => setPlaying((p) => !p),
-      setSpeed,
+      toggle: () => {
+        if (!playing) play();
+        else if (audio.current) audio.current.pause();
+        else setPlaying(false);
+      },
+      setSpeed: (s) => {
+        setSpeed(s);
+        if (audio.current) audio.current.playbackRate = s;
+      },
       registerLine: (id, el) => {
         if (el) lines.current.set(id, el);
         else lines.current.delete(id);
       },
       segmentAt,
     }),
-    [meeting, segments, speakers, currentMs, playing, speed, flash, jump, segmentAt],
+    [meeting, segments, speakers, currentMs, playing, speed, flash, seek, play, jump, segmentAt],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

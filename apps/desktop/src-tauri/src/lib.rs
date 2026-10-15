@@ -9,6 +9,7 @@ mod dates;
 mod feishu;
 mod feishu_api;
 mod llm;
+mod playback;
 mod server;
 mod storage;
 #[cfg(test)]
@@ -75,6 +76,11 @@ pub fn run() {
         .manage(feishu::Feishu::default())
         .manage(feishu_api::FeishuApi::default())
         .manage(transcribe::Transcriber::default())
+        // The meeting page's player; reading a range of a long recording stays off the main thread.
+        .register_asynchronous_uri_scheme_protocol(playback::SCHEME, |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            tauri::async_runtime::spawn_blocking(move || responder.respond(playback::serve(&app, &request)));
+        })
         .invoke_handler(tauri::generate_handler![
             capture::capture_start,
             capture::capture_command,
