@@ -250,7 +250,7 @@ fn the_number_of_people_splits_voices_found_as_one() {
 
 #[test]
 #[ignore = "needs the downloaded models and macOS `say`"]
-fn a_call_taken_for_a_room_still_has_one_voice_as_me() {
+fn a_call_taken_for_a_room_takes_nobody_for_me() {
     let dir = fixture("rec-call", &["--echo"]);
     let t = run(&dir, Hints { scene: Some(Scene::InPerson), people: None });
     check_shape(&t, "rec-call", "in-person");
@@ -258,7 +258,8 @@ fn a_call_taken_for_a_room_still_has_one_voice_as_me() {
     let segments = t["segments"].as_array().unwrap();
 
     assert_eq!(ids(&t), ["S1", "S2", "S3"]);
-    assert_eq!(t["speakers"][0]["source"], "self");
+    // The one voice on the mic is the person recording, but in a room that is not assumed.
+    assert_eq!((&t["speakers"][0]["source"], &t["speakers"][0]["label"]), (&"unknown".into(), &"说话人 1".into()));
     let mic = track_cer(&utterances, segments, "mic");
     assert!(mic < 0.03, "CER mic {mic:.3}");
     let leaked = segments

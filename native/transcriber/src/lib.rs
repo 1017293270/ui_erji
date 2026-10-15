@@ -4,7 +4,8 @@
 //! On a call the mic track is the person recording (`S1`, 「我」) and the system track,
 //! everything the computer played, is split into speakers `S2…` by diarization. Around
 //! a table everyone is on the mic track, so it is diarized too and the voices are
-//! numbered `S1…` (still 「我」 if only one voice is found). All functions block; run
+//! numbered `S1…`, nobody taken for the person recording: even a lone voice may be
+//! someone else's. Their voiceprint or a name says who it is. All functions block; run
 //! them on a worker thread and set `cancel` to stop early.
 
 mod error;
@@ -16,7 +17,6 @@ mod text;
 mod transcript;
 mod voices;
 
-use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -171,8 +171,8 @@ pub fn transcribe(
 
 /// A call when the computer played a fair share of the speech (the other side), in
 /// person otherwise. It leans towards in person: taking a call for a room costs little,
-/// since the one voice on the mic still comes out as 「我」, while taking a room for a
-/// call would put everyone in it under 「我」.
+/// the voice on the mic comes out as 说话人 1 and a voiceprint or a name puts it right,
+/// while taking a room for a call would put everyone in it under 「我」.
 fn guess_scene(recording: &Recording, mic: &[Region], system: &[Region]) -> Scene {
     let seconds = |regions: &[Region]| regions.iter().map(Region::len).sum::<u64>() / SAMPLE_RATE as u64;
     let (mic, system) = (seconds(mic), seconds(system));
@@ -184,9 +184,9 @@ fn guess_scene(recording: &Recording, mic: &[Region], system: &[Region]) -> Scen
 fn assemble(recording: &Recording, scene: Scene, mut units: Vec<Unit>) -> Transcript {
     units.sort_by_key(|u| (u.start, u.end, u.track == Track::System));
 
-    // The mic is the person recording unless it heard several people.
-    let mic_voices: BTreeSet<usize> = units.iter().filter(|u| u.track == Track::Mic).map(|u| u.speaker).collect();
-    let mic_is_me = recording.mic.is_some() && mic_voices.len() <= 1;
+    // On a call the mic is the person recording. In a room it is whoever was there, and a
+    // single voice is no exception: someone else may have done all the talking.
+    let mic_is_me = recording.mic.is_some() && scene == Scene::Online;
     let mut speakers = Vec::new();
     if mic_is_me {
         speakers.push(Speaker {
