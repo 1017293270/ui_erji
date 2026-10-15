@@ -42,6 +42,8 @@ export const APP_PERMISSIONS = {
       "contact:user.base:readonly",
       "contact:department.base:readonly",
       "contact:user.employee:readonly",
+      // Voiceprint consent cards.
+      "im:message:send_as_bot",
     ],
     user: SCOPES,
   },

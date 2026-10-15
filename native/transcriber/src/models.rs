@@ -173,15 +173,20 @@ pub fn model_status(models_dir: &Path) -> ModelStatus {
 
 /// All models present and intact (hashes about 270 MB, a fraction of a second).
 pub(crate) fn ensure_ready(models_dir: &Path) -> Result<()> {
-    if !ALL.iter().all(|spec| spec.is_ready(models_dir)) {
+    ensure(models_dir, &ALL)
+}
+
+/// These models present and intact. Every one given is checked, so one download replaces all
+/// the damaged ones.
+pub(crate) fn ensure(models_dir: &Path, specs: &[&Spec]) -> Result<()> {
+    if !specs.iter().all(|spec| spec.is_ready(models_dir)) {
         let mb = model_status(models_dir).download_bytes.div_ceil(1_000_000);
         return Err(Error::new(
             ErrorKind::ModelsMissing,
             format!("转写模型还没有下载完成：请先下载语音模型（约 {mb} MB），再开始转写。"),
         ));
     }
-    // Every model is checked, so one download replaces all the damaged ones.
-    let damaged: Vec<&str> = ALL.iter().filter(|spec| !spec.verify(models_dir)).map(|spec| spec.name).collect();
+    let damaged: Vec<&str> = specs.iter().filter(|spec| !spec.verify(models_dir)).map(|spec| spec.name).collect();
     if damaged.is_empty() {
         return Ok(());
     }

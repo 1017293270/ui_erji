@@ -95,6 +95,15 @@ fn list_in(dir: &Path) -> Vec<Value> {
     meetings.into_iter().map(|(_, meeting)| meeting).collect()
 }
 
+/// One meeting's meeting.json, if it is there and readable.
+pub(crate) fn read_meeting(app: &AppHandle, id: &str) -> Option<Value> {
+    if !valid_id(id) {
+        return None;
+    }
+    let text = std::fs::read(recordings_dir(app).ok()?.join(id).join(MEETING_FILE)).ok()?;
+    serde_json::from_slice(&text).ok()
+}
+
 fn save_in(dir: &Path, meeting: &Value) -> Result<(), String> {
     if !meeting.is_object() {
         return Err("会议数据格式不对，没有保存。".into());

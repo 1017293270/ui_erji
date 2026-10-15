@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Check, Mic, RefreshCw } from "lucide-react";
-import type { Minutes, Point, Scene, Speaker } from "@echomind/shared";
+import type { Minutes, Person, Point, Scene, Speaker } from "@echomind/shared";
 import { clock, dayLabel, timeOfDay } from "@echomind/shared";
 import { cn } from "@echomind/ui";
 import { Avatar, Badge, Button, SpeakerDot, Tabs } from "../../components/ui";
@@ -320,14 +320,15 @@ function SceneNote() {
 function NameSpeaker({ speaker, meetingId, participantIds, onDone }: { speaker: Speaker; meetingId: string; participantIds: string[]; onDone: () => void }) {
   const store = useStore();
   const [picked, setPicked] = useState<string | null>(speaker.personId);
-  const [remember, setRemember] = useState(true);
   const named = new Set(
     (store.meetings.find((m) => m.id === meetingId)?.transcript?.speakers ?? []).filter((s) => s.id !== speaker.id).map((s) => s.personId),
   );
   const participants = store.people.filter((p) => participantIds.includes(p.id));
   const others = store.people.filter((p) => !participantIds.includes(p.id));
   const pickedPerson = store.person(picked);
-  const enrolled = picked ? store.voiceprints[picked]?.status === "enrolled" : false;
+  const offer = pickedPerson && !pickedPerson.external ? rememberOffer(store, pickedPerson) : null;
+  const [remember, setRemember] = useState<Record<string, boolean>>({});
+  const ticked = !!offer && (remember[offer.personId] ?? offer.ticked);
   const panel = useRef<HTMLDivElement>(null);
 
   // Opened from the transcript, the panel may sit below the fold of the side column.
@@ -360,14 +361,21 @@ function NameSpeaker({ speaker, meetingId, participantIds, onDone }: { speaker: 
       <div className="grid grid-cols-2 gap-1.5">{participants.map((p) => option(p.id))}</div>
       <p className="mt-3 mb-2 text-[12px] text-muted-foreground">其他人</p>
       <div className="grid grid-cols-2 gap-1.5">{others.map((p) => option(p.id))}</div>
-      {pickedPerson && !pickedPerson.external && !enrolled ? (
+      {offer?.label ? (
         <label className="mt-3.5 flex cursor-pointer items-start gap-2.5 rounded-[10px] bg-secondary px-3 py-2.5">
-          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="mt-[3px] accent-[var(--primary)]" />
+          <input
+            type="checkbox"
+            checked={ticked}
+            onChange={(e) => setRemember({ ...remember, [offer.personId]: e.target.checked })}
+            className="mt-[3px] accent-[var(--primary)]"
+          />
           <span className="text-[12.5px] leading-relaxed">
-            记住 {pickedPerson.name} 的声音
-            <span className="block text-muted-foreground">会给 {pickedPerson.name} 发一张飞书卡片，本人点同意后才保存声纹。</span>
+            {offer.label}
+            <span className="block text-muted-foreground">{offer.hint}</span>
           </span>
         </label>
+      ) : offer?.hint ? (
+        <p className="mt-3.5 rounded-[10px] bg-secondary px-3 py-2.5 text-[12.5px] leading-relaxed text-muted-foreground">{offer.hint}</p>
       ) : null}
       <div className="mt-3.5 flex justify-end gap-2">
         <Button variant="ghost" size="sm" onClick={onDone}>
@@ -379,7 +387,9 @@ function NameSpeaker({ speaker, meetingId, participantIds, onDone }: { speaker: 
           disabled={!picked}
           icon={<Mic className="size-3.5" />}
           onClick={() => {
-            store.dispatch({ type: "renameSpeaker", meetingId, speakerId: speaker.id, personId: picked, remember: remember && !enrolled });
+            // The demo pretends inside the reducer; the app asks the server once the name is in.
+            store.dispatch({ type: "renameSpeaker", meetingId, speakerId: speaker.id, personId: picked, remember: !LIVE && ticked });
+            if (LIVE && ticked && picked) void store.rememberVoice(meetingId, speaker.id, picked);
             onDone();
           }}
         >
@@ -388,6 +398,43 @@ function NameSpeaker({ speaker, meetingId, participantIds, onDone }: { speaker: 
       </div>
     </div>
   );
+}
+
+/**
+ * What naming someone offers to do with their voice. No `label`: nothing to tick, and `hint`
+ * (if any) says why. Keeping your own voice is consent, so that box starts unticked.
+ */
+function rememberOffer(store: ReturnType<typeof useStore>, person: Person): { personId: string; label?: string; hint?: string; ticked: boolean } | null {
+  const status = store.voiceprints[person.id]?.status ?? "none";
+  const name = person.name;
+  if (!LIVE) {
+    if (status === "enrolled") return null;
+    return { personId: person.id, label: `记住 ${name} 的声音`, hint: `会给 ${name} 发一张飞书卡片，本人点同意后才保存声纹。`, ticked: true };
+  }
+  if (!store.feishu?.user) return null;
+  if (person.id === store.me) {
+    return {
+      personId: person.id,
+      label: status === "enrolled" ? "把这段声音加进我的声纹" : "记住我的声音",
+      hint:
+        status === "enrolled"
+          ? "这次没有自动认出你，加进去以后更容易认出。"
+          : "勾选即同意 EchoMind 在服务器上加密保存你的声纹（声音特征，不是录音），以后开会自动认出你。随时可以在「人员与声纹」里删除。",
+      ticked: false,
+    };
+  }
+  switch (status) {
+    case "enrolled":
+      return { personId: person.id, label: `把这段声音加进 ${name} 的声纹`, hint: "这次没有自动认出来，加进去以后更容易认出。", ticked: true };
+    case "agreed":
+      return { personId: person.id, label: `记住 ${name} 的声音`, hint: `${name} 已同意保存声纹。`, ticked: true };
+    case "pending":
+      return { personId: person.id, label: `记住 ${name} 的声音`, hint: `已经给 ${name} 发过同意卡片，${name} 点同意后自动保存。`, ticked: true };
+    case "declined":
+      return { personId: person.id, hint: `${name} 没有同意保存声纹，这次只命名，不记声音。`, ticked: false };
+    default:
+      return { personId: person.id, label: `记住 ${name} 的声音`, hint: `会给 ${name} 发一张飞书卡片，本人点同意后才保存声纹。`, ticked: true };
+  }
 }
 
 export function GoConfirm({ meetingId, count }: { meetingId: string; count: number }) {

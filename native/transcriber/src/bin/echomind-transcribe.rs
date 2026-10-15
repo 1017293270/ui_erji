@@ -5,6 +5,7 @@
 //!   echomind-transcribe download [--models-dir DIR] [--json]
 //!   echomind-transcribe run <recording_dir> [--scene in-person|online] [--speakers N] [--out transcript.json]
 //!                           [--models-dir DIR] [--json]
+//!   echomind-transcribe voices <recording_dir> [--transcript transcript.json] [--models-dir DIR] [--json]
 //!
 //! Without --json, results go to stdout (or --out) and progress to stderr for people.
 //! With --json, stdout carries one JSON object per line (`progress`, `download`, then
@@ -18,7 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use echomind_transcriber::{download_models, model_status, transcribe, Error, ErrorKind, Hints, Scene};
+use echomind_transcriber::{download_models, model_status, transcribe, voices, Error, ErrorKind, Hints, Scene, Transcript};
 use serde_json::{json, Value};
 
 const USAGE: &str = "用法：
@@ -26,10 +27,12 @@ const USAGE: &str = "用法：
   echomind-transcribe download [--models-dir DIR] [--json]
   echomind-transcribe run <录音文件夹> [--scene in-person|online] [--speakers N] [--out transcript.json]
                          [--models-dir DIR] [--json]
+  echomind-transcribe voices <录音文件夹> [--transcript transcript.json] [--models-dir DIR] [--json]
 
 --scene：in-person 是面对面开会，麦克风录到的每个人都按声音区分；online 是线上会议，麦克风只算你本人。
 --speakers：有几个人说话。面对面时是现场所有人（包括你），线上时是对方（不包括你）。
 这两项不写就根据录音自动判断。
+voices：按转写结果给每个说话人算一份声纹（不写入文件），--transcript 默认是录音文件夹里的 transcript.json。
 模型目录默认是应用数据目录下的 models/，也可以用环境变量 ECHOMIND_MODELS_DIR 指定。
 ECHOMIND_MODEL_MIRROR 可以把下载地址换成镜像（替换 https://github.com/k2-fsa/sherpa-onnx/releases/download）。
 --json：stdout 每行一个 JSON 事件；stdin 收到 cancel 或 EOF 时停止。";
@@ -61,6 +64,7 @@ fn main() -> ExitCode {
     let mut positional = Vec::new();
     let mut models_dir = None;
     let mut out = None;
+    let mut transcript_path = None;
     let mut hints = Hints::default();
     let mut machine = false;
     let mut it = args.iter();
@@ -68,6 +72,7 @@ fn main() -> ExitCode {
         match arg.as_str() {
             "--models-dir" => models_dir = it.next().map(PathBuf::from),
             "--out" => out = it.next().map(PathBuf::from),
+            "--transcript" => transcript_path = it.next().map(PathBuf::from),
             "--scene" => match it.next().and_then(|s| Scene::parse(s)) {
                 Some(s) => hints.scene = Some(s),
                 None => {
@@ -116,6 +121,10 @@ fn main() -> ExitCode {
         }
         Some("download") => download(&models_dir, &cancel, machine),
         Some("run") if positional.len() == 2 => run(Path::new(&positional[1]), &models_dir, hints, out, &cancel, machine),
+        Some("voices") if positional.len() == 2 => {
+            let dir = Path::new(&positional[1]);
+            print_voices(dir, &transcript_path.unwrap_or_else(|| dir.join("transcript.json")), &models_dir, &cancel, machine)
+        }
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
@@ -253,4 +262,20 @@ fn install_ctrl_c(cancel: Arc<AtomicBool>) {
     }
     #[cfg(not(unix))]
     let _ = cancel;
+}
+
+fn print_voices(dir: &Path, transcript: &Path, models_dir: &Path, cancel: &AtomicBool, machine: bool) -> Result<(), Error> {
+    let unreadable = || Error { kind: ErrorKind::Recording, message: "读不到这场会议的转写结果：请重新转写这场会议。".into() };
+    let bytes = std::fs::read(transcript).map_err(|_| unreadable())?;
+    let transcript: Transcript = serde_json::from_slice(&bytes).map_err(|_| unreadable())?;
+    let voices = voices(dir, &transcript, models_dir, cancel)?;
+    if machine {
+        emit(json!({ "type": "done", "voices": voices }));
+    } else {
+        for v in &voices {
+            eprintln!("{}  {:.1} s", v.speaker_id, v.seconds);
+        }
+        println!("{}", serde_json::to_string(&voices).unwrap());
+    }
+    Ok(())
 }

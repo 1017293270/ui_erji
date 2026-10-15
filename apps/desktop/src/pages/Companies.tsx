@@ -255,8 +255,9 @@ function AddCompany({
         <p className="text-[13px] text-muted-foreground">先在那家公司的飞书开发者后台（open.feishu.cn/app）把应用准备好：</p>
         <ol className="mt-3.5 space-y-3">
           <SetupStep n={1}>创建一个「企业自建应用」，名字可以叫 EchoMind。</SetupStep>
+          <SetupStep n={2}>在「添加应用能力」里添加「机器人」：声纹同意卡片由它发出。</SetupStep>
           <SetupStep
-            n={2}
+            n={3}
             action={
               <Button size="sm" icon={<Copy className="size-3.5" />} disabled={!permissions} onClick={() => copy(JSON.stringify(permissions, null, 2), "权限清单已复制")}>
                 复制权限清单
@@ -265,9 +266,9 @@ function AddCompany({
           >
             在「权限管理 → 批量导入/导出」里粘贴权限清单，一次开通所需的权限。
           </SetupStep>
-          <SetupStep n={3}>在「权限管理 → 数据权限 → 通讯录权限范围」里选择全部成员。</SetupStep>
+          <SetupStep n={4}>在「权限管理 → 数据权限 → 通讯录权限范围」里选择全部成员。</SetupStep>
           <SetupStep
-            n={4}
+            n={5}
             action={
               <Button size="sm" icon={<Copy className="size-3.5" />} onClick={() => copy(redirectUri, "回调地址已复制")}>
                 复制地址
@@ -276,8 +277,8 @@ function AddCompany({
           >
             在「安全设置 → 重定向 URL」里添加 <span className="font-mono text-[12.5px] text-foreground">{redirectUri}</span>
           </SetupStep>
-          <SetupStep n={5}>在「版本管理与发布」里设好可用范围并发布，等那家公司的管理员审核通过。</SetupStep>
-          <SetupStep n={6}>把「凭证与基础信息」里的 App ID 和 App Secret 填到下面。</SetupStep>
+          <SetupStep n={6}>在「版本管理与发布」里设好可用范围并发布，等那家公司的管理员审核通过。</SetupStep>
+          <SetupStep n={7}>把「凭证与基础信息」里的 App ID 和 App Secret 填到下面。</SetupStep>
         </ol>
 
         <div className="mt-5 flex items-center gap-2 border-t border-soft-line pt-5">
@@ -311,6 +312,11 @@ function AddCompany({
         ) : (
           <p className="mt-2.5 text-[12px] leading-relaxed text-subtle">添加时会用这组 App ID 和 App Secret 向飞书核对，并读出企业名称。App Secret 加密保存在 EchoMind 服务器上，这台电脑不保存。</p>
         )}
+        <ol className="mt-5 space-y-3 border-t border-soft-line pt-5">
+          <SetupStep n={8}>
+            添加以后等一分钟，在「事件与回调 → 回调配置」里选择「使用长连接接收回调」，添加「卡片回传交互」，再发布一个版本。这样同事点声纹同意卡片上的按钮，EchoMind 才能收到。
+          </SetupStep>
+        </ol>
       </div>
     </section>
   );

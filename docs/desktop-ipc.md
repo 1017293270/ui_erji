@@ -158,3 +158,25 @@ Transcript rules: speaker `S1` is the microphone (`label: "我"`, `track: "mic"`
 `personId: null` — the webview fills it); remote voices are `S2…` (`label: "说话人 2"…`,
 `track: "system"`, `source: "unknown"`). Segments are sorted by `start`, ids `seg-0001…`,
 times in ms from the recording start (pauses leave gaps), text with punctuation.
+
+## Voiceprints
+
+| Command | Args | Returns |
+| --- | --- | --- |
+| `voiceprints_list` | – | `{ openId, status: "asked" \| "agreed" \| "declined", enrolled, samples, seconds, askedBy, askedAt, answeredAt }[]` — everyone in the company with a voiceprint or a consent card out; also sends samples waiting for consent, in the background |
+| `voiceprint_ask` | `openId, meeting?: string` | the person's entry — sends them the consent card (once a day at most) |
+| `voiceprint_delete` | `openId` | `()` — deletes the voiceprint and the consent behind it |
+| `voiceprint_remember` | `meetingId, speakerId, openId, meetingTitle?` | `{ status: "saved" \| "asked" \| "waiting" \| "declined", voiceprint? }` — after naming a speaker with 「记住声音」 ticked |
+| `voices_match` | `meetingId` | `{ speakerId, openId, score }[]` — who the voices of a transcribed meeting are |
+
+The voices are worked out by the sidecar (`echomind-transcribe voices <dir>`, from the recording
+and its `transcript.json`) and stay in Rust: the webview only sees outcomes. They go to the server
+to be matched (compared and forgotten), or added to the voiceprint of someone who agreed; naming
+yourself with 「记住我的声音」 ticked is your own consent. For a colleague who has not answered,
+`voice-pending.json` notes the meeting, the speaker and who named them (no audio, no voiceprint)
+for up to 30 days. Once they agree, the sample is worked out again and sent, if the meeting still
+gives that speaker their name: a speaker named someone else since, or speakers worked out again,
+send nothing. Samples go out when `voiceprints_list` runs and every 5 minutes while the app is
+open, only under the sign-in that named them (open ids are per company app). A sample sent in the
+background emits `voiceprints://changed`, so the page reads the list again. See
+`docs/voiceprints.md`.

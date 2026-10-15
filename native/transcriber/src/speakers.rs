@@ -209,11 +209,11 @@ fn load(track: &TrackAudio, block: &[Region]) -> Result<(Vec<f32>, Vec<Span>)> {
     Ok((audio, spans))
 }
 
-fn engine_error(what: &str) -> Error {
+pub(crate) fn engine_error(what: &str) -> Error {
     Error::new(ErrorKind::Engine, format!("{what}模型加载失败，模型文件可能已损坏：请删除后重新下载语音模型。"))
 }
 
-fn embedding_config(models_dir: &Path, threads: i32) -> SpeakerEmbeddingExtractorConfig {
+pub(crate) fn embedding_config(models_dir: &Path, threads: i32) -> SpeakerEmbeddingExtractorConfig {
     SpeakerEmbeddingExtractorConfig {
         model: Some(models::EMBEDDING.path(models_dir, models::EMBEDDING.file_name())),
         num_threads: threads,

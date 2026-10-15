@@ -92,6 +92,10 @@ export function explain(error: unknown, identity: Identity): string {
       return "没有权限查看这个日程的参与人：需要日程组织者允许参与人查看参与人列表。";
     case 195100:
       return "这个飞书账号已经离职，或者不在当前企业里：请换一个账号登录。";
+    case 230006:
+      return "这家公司的飞书应用还没有启用机器人，发不了消息：请在开发者后台「添加应用能力」里添加机器人，然后发布新版本。";
+    case 230013:
+      return "对方不在飞书应用的可用范围里，收不到 EchoMind 的消息：请在开发者后台「版本管理与发布」里把对方加进可用范围，并发布新版本。";
     case 1470400:
       return `飞书任务的内容不符合要求：${msg}`;
     case 1470403:

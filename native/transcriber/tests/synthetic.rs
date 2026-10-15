@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
-use echomind_transcriber::{model_status, transcribe, Hints, Scene};
+use echomind_transcriber::{model_status, transcribe, voices, Hints, Scene, Transcript};
 use serde_json::Value;
 
 fn models_dir() -> PathBuf {
@@ -267,4 +267,50 @@ fn a_call_taken_for_a_room_still_has_one_voice_as_me() {
         .count();
     assert_eq!(leaked, 0, "echo kept as the user's speech");
     cleanup(&dir);
+}
+
+/// The voice that says most of what a speaker id says.
+fn voice_of<'a>(utterances: &'a [Value], segments: &[Value], speaker: &str) -> &'a str {
+    let mine: Vec<&Value> = segments.iter().filter(|s| s["speakerId"] == speaker).collect();
+    utterances
+        .iter()
+        .max_by_key(|u| mine.iter().map(|s| overlap(u, s)).sum::<i64>())
+        .and_then(|u| u["voice"].as_str())
+        .unwrap()
+}
+
+#[test]
+#[ignore = "needs the downloaded models and macOS `say`"]
+fn voices_are_recognised_in_another_meeting() {
+    // The same three people, seated (and so numbered) differently.
+    let a = fixture("rec-voices-a", &["--in-person", "--voices", ROOM_VOICES]);
+    let b = fixture("rec-voices-b", &["--in-person", "--voices", "Grandma (Chinese (China mainland)),Tingting,Eddy (Chinese (China mainland))"]);
+    let models = models_dir();
+    let mut found = Vec::new();
+    for dir in [&a, &b] {
+        // Telling the voices apart is not what this checks.
+        let value = run(dir, Hints { scene: None, people: Some(3) });
+        let transcript: Transcript = serde_json::from_value(value.clone()).unwrap();
+        let utterances = read_json(&dir.join("expected.json"))["utterances"].as_array().unwrap().clone();
+        let segments = value["segments"].as_array().unwrap().clone();
+        let vs = voices(dir, &transcript, &models, &AtomicBool::new(false)).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(vs.len(), 3);
+        let named: Vec<(String, Vec<f32>, f32)> =
+            vs.into_iter().map(|v| (voice_of(&utterances, &segments, &v.speaker_id).to_string(), v.vector, v.seconds)).collect();
+        found.push(named);
+    }
+    // As the server decides (apps/server/src/voiceprints.ts): the closest voiceprint, at a cosine
+    // similarity of 0.6 or more and 0.05 ahead of the next. Eddy and Grandma, two voices of one
+    // speech synthesizer, come out at about 0.7 to each other, so the margin is what tells them apart.
+    for (name_b, vb, _) in &found[1] {
+        let mut scores: Vec<(&str, f32)> =
+            found[0].iter().map(|(name_a, va, _)| (name_a.as_str(), va.iter().zip(vb).map(|(x, y)| x * y).sum())).collect();
+        scores.sort_by(|x, y| y.1.total_cmp(&x.1));
+        println!("{name_b}: {scores:.2?}");
+        let (best, top) = scores[0];
+        assert_eq!(best, name_b, "{name_b} taken for {best}");
+        assert!(top >= 0.6 && top - scores[1].1 >= 0.05, "{name_b} not recognised clearly: {scores:.2?}");
+    }
+    cleanup(&a);
+    cleanup(&b);
 }

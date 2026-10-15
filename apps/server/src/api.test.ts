@@ -7,6 +7,7 @@ import { keepGrantsAlive } from "./grants";
 import { createApp } from "./http";
 import { type Answer, type FakeRequest, fakeFeishu, fakeFetch, ok } from "./testing/feishu";
 import { freshDb, hasDb } from "./testing/db";
+import { answerCard } from "./voiceprints";
 
 const KEY = randomBytes(32);
 
@@ -45,6 +46,13 @@ function world() {
     refreshDelayMs: 0,
     directoryDown: false,
     rejectAccess: new Set<string>(),
+    /** Cards the bot sent, and the ones it changed afterwards. */
+    cards: [] as { to: string; card: Record<string, any> }[],
+    cardUpdates: [] as { id: string; card: Record<string, any> }[],
+    /** People outside the app's availability scope. */
+    unreachable: new Set<string>(),
+    /** Runs after a card arrives, before Feishu answers the bot: a press that quick. */
+    whileSending: null as null | (() => Promise<unknown>),
   };
   /** The app each user token came from, and the refresh tokens not spent yet. */
   const issuedBy = new Map<string, string>();
@@ -104,6 +112,17 @@ function world() {
         return ok({ items: [] });
       case "/open-apis/task/v2/tasks":
         return ok({ task: { guid: "task-1", url: "https://applink.feishu.cn/client/todo/detail?guid=task-1" } });
+      case "/open-apis/im/v1/messages": {
+        const message = req.body as { receive_id: string; content: string };
+        if (state.unreachable.has(message.receive_id)) return [400, { code: 230013, msg: "Bot has NO availability to this user." }];
+        state.cards.push({ to: message.receive_id, card: JSON.parse(message.content) });
+        await state.whileSending?.();
+        return ok({ message_id: `om_${state.cards.length}` });
+      }
+    }
+    if (req.method === "PATCH" && req.path.startsWith("/open-apis/im/v1/messages/")) {
+      state.cardUpdates.push({ id: req.path.split("/").pop()!, card: JSON.parse((req.body as { content: string }).content) });
+      return ok({});
     }
     return [404, { code: 404, msg: req.path }];
   };
@@ -442,5 +461,151 @@ describe.skipIf(!hasDb)("api", () => {
     const statuses = replies.map((r) => r.status);
     expect(statuses.filter((s) => s === 404)).toHaveLength(20);
     expect(statuses.filter((s) => s === 429)).toHaveLength(30);
+  });
+
+  /** A voice: 192 numbers along `axis`, with a little of `other` mixed in. */
+  const voice = (axis: number, other = axis + 1, mix = 0.2) => Array.from({ length: 192 }, (_, i) => (i === axis ? 1 : i === other ? mix : 0));
+  /** 张三 signed in, with 李雷 in the directory. */
+  const voiceprintsAs = async () => {
+    const token = (await signIn()).body.token as string;
+    await call("/v1/directory", { token });
+    const [tenant] = await sql<{ id: string }[]>`select id from tenants where feishu_app_id = 'cli_test'`;
+    const vp = (path = "", init: RequestInit & { json?: unknown } = {}) => call(`/v1/voiceprints${path}`, { token, ...init });
+    return { vp, tenantId: tenant!.id, deps: { sql, companies, key: KEY } };
+  };
+
+  it("keeps a colleague's voiceprint only once they agree on the card, then recognises them", async () => {
+    const { vp, tenantId, deps } = await voiceprintsAs();
+
+    const early = await vp("/ou_li/samples", { method: "POST", json: { vector: voice(1), seconds: 20 } });
+    expect(await json(early)).toMatchObject({ error: { code: "consent_needed" } });
+
+    const asked = await vp("/ou_li/ask", { method: "POST", json: { meeting: "周会" } });
+    expect(await json(asked)).toMatchObject({ openId: "ou_li", status: "asked", enrolled: false, askedBy: "张三" });
+    expect(w.state.cards.map((c) => c.to)).toEqual(["ou_li"]);
+    expect(JSON.stringify(w.state.cards[0]!.card)).toContain("会议「周会」");
+    expect(await json(await vp("/ou_li/ask", { method: "POST", json: {} }))).toMatchObject({ error: { code: "asked_recently" } });
+
+    // Only the person the card is about can answer it.
+    const agree = w.state.cards[0]!.card.elements.at(-1).actions[0].value;
+    expect(agree).toEqual({ voiceprint: "agree", person: "ou_li" });
+    expect((await answerCard(deps, tenantId, { operatorOpenId: "ou_me", value: agree })).toast.type).toBe("error");
+    const agreed = await answerCard(deps, tenantId, { operatorOpenId: "ou_li", value: agree });
+    expect(agreed.card?.data).toMatchObject({ header: { template: "green" } });
+
+    const saved = await vp("/ou_li/samples", { method: "POST", json: { vector: voice(1), seconds: 20 } });
+    expect(await json(saved)).toMatchObject({ status: "agreed", enrolled: true, samples: 1, seconds: 20 });
+    const [row] = await sql<{ vector: Uint8Array }[]>`select vector from voiceprints v join people p on p.id = v.person_id where p.open_id = 'ou_li'`;
+    expect(Buffer.from(row!.vector).includes(Buffer.from(Float32Array.of(1 / Math.hypot(1, 0.2)).buffer))).toBe(false);
+    const elsewhere = await vp("/ou_li/samples", { method: "POST", json: { vector: voice(50), seconds: 20 } });
+    expect(await json(elsewhere)).toMatchObject({ error: { code: "not_same_person" } });
+    const short = await vp("/ou_li/samples", { method: "POST", json: { vector: voice(1), seconds: 2 } });
+    expect(await json(short)).toMatchObject({ error: { code: "too_short" } });
+
+    // Naming yourself is your own consent.
+    expect(await json(await vp("/ou_me/samples", { method: "POST", json: { vector: voice(100), seconds: 30 } }))).toMatchObject({ status: "agreed", enrolled: true });
+    expect(await json(await vp("/ou_me/ask", { method: "POST", json: {} }))).toMatchObject({ error: { code: "self" } });
+
+    // S2 and S5 both sound like 李雷: the closer one is him. S3 is nobody known; S4 says too little.
+    const match = await vp("/match", {
+      method: "POST",
+      json: {
+        voices: [
+          { speakerId: "S2", vector: voice(1, 2, 0.3), seconds: 40 },
+          { speakerId: "S3", vector: voice(150), seconds: 40 },
+          { speakerId: "S4", vector: voice(100), seconds: 1 },
+          { speakerId: "S5", vector: voice(1, 3, 0.25), seconds: 40 },
+        ],
+      },
+    });
+    expect(await json(match)).toEqual({ matches: [{ speakerId: "S2", openId: "ou_li", score: 1 }] });
+
+    const list = (await json(await vp())).voiceprints as { openId: string; status: string; enrolled: boolean }[];
+    expect(list.map((v) => [v.openId, v.status, v.enrolled])).toEqual([["ou_me", "agreed", true], ["ou_li", "agreed", true]]);
+
+    // 李雷 deletes his on the card; 张三 deletes his own in the app.
+    const deleted = await answerCard(deps, tenantId, { operatorOpenId: "ou_li", value: { voiceprint: "delete", person: "ou_li" } });
+    expect(deleted.toast.content).toBe("已删除你的声纹。");
+    expect((await vp("/ou_me", { method: "DELETE" })).status).toBe(200);
+    expect((await json(await vp())).voiceprints).toEqual([]);
+  });
+
+  it("declining drops what was kept, and a deletion in the app shows on the card", async () => {
+    const { vp, tenantId, deps } = await voiceprintsAs();
+    await vp("/ou_li/ask", { method: "POST", json: {} });
+    await answerCard(deps, tenantId, { operatorOpenId: "ou_li", value: { voiceprint: "agree", person: "ou_li" } });
+    await vp("/ou_li/samples", { method: "POST", json: { vector: voice(1), seconds: 20 } });
+
+    // The 不同意 button of the first card, pressed later.
+    await answerCard(deps, tenantId, { operatorOpenId: "ou_li", value: { voiceprint: "decline", person: "ou_li" } });
+    expect((await json(await vp())).voiceprints).toMatchObject([{ openId: "ou_li", status: "declined", enrolled: false, samples: 0 }]);
+    expect(await json(await vp("/ou_li/samples", { method: "POST", json: { vector: voice(1), seconds: 20 } }))).toMatchObject({ error: { code: "consent_needed" } });
+
+    await answerCard(deps, tenantId, { operatorOpenId: "ou_li", value: { voiceprint: "agree", person: "ou_li" } });
+    await vp("/ou_li", { method: "DELETE" });
+    expect(w.state.cardUpdates).toHaveLength(1);
+    expect(w.state.cardUpdates[0]!.id).toBe("om_1");
+    expect(JSON.stringify(w.state.cardUpdates[0]!.card)).toContain("你的声纹已删除");
+  });
+
+  it("keeps an answer given while the card was still being sent", async () => {
+    const { vp, tenantId, deps } = await voiceprintsAs();
+    w.state.whileSending = () => answerCard(deps, tenantId, { operatorOpenId: "ou_li", value: { voiceprint: "decline", person: "ou_li" } });
+    expect(await json(await vp("/ou_li/ask", { method: "POST", json: {} }))).toMatchObject({ status: "declined", askedBy: "张三" });
+    expect(await json(await vp("/ou_li/samples", { method: "POST", json: { vector: voice(1), seconds: 20 } }))).toMatchObject({ error: { code: "consent_needed" } });
+  });
+
+  it("writes nothing when the answer to a card would come too late", async () => {
+    const { vp, tenantId, deps } = await voiceprintsAs();
+    await vp("/ou_li/ask", { method: "POST", json: {} });
+    const late = await answerCard(deps, tenantId, { operatorOpenId: "ou_li", value: { voiceprint: "agree", person: "ou_li" } }, Date.now() - 1).catch((e: Error) => e);
+    expect(late).toBeInstanceOf(Error);
+    expect((await json(await vp())).voiceprints).toMatchObject([{ openId: "ou_li", status: "asked" }]);
+  });
+
+  it("merges first samples sent at the same moment", async () => {
+    const { vp, tenantId } = await voiceprintsAs();
+    // An insert not committed yet holds both samples at the same point, as a slow database would.
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let holding!: () => void;
+    const held = new Promise<void>((resolve) => (holding = resolve));
+    const blocker = sql
+      .begin(async (tx) => {
+        await tx`insert into voiceprints (person_id, status) select id, 'agreed' from people where tenant_id = ${tenantId} and open_id = 'ou_me'`;
+        holding();
+        await released;
+        throw new Error("rolled back");
+      })
+      .catch(() => {});
+    await held;
+    const sent = [0, 0.4].map((mix) => vp("/ou_me/samples", { method: "POST", json: { vector: voice(100, 101, mix), seconds: 30 } }));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    release();
+    await blocker;
+    await Promise.all(sent);
+    expect((await json(await vp())).voiceprints).toMatchObject([{ openId: "ou_me", samples: 2, seconds: 60 }]);
+    // Both went in: the voiceprint sits between them, not on either one.
+    const match = await vp("/match", { method: "POST", json: { voices: [{ speakerId: "S1", vector: voice(100, 101, 0.2), seconds: 40 }] } });
+    expect(await json(match)).toEqual({ matches: [{ speakerId: "S1", openId: "ou_me", score: 1 }] });
+  });
+
+  it("says why a card could not be sent, and keeps companies apart", async () => {
+    const { vp } = await voiceprintsAs();
+    w.state.unreachable.add("ou_li");
+    const unreachable = await vp("/ou_li/ask", { method: "POST", json: {} });
+    expect(unreachable.status).toBe(502);
+    expect((await json(unreachable)).error.message).toContain("可用范围");
+    expect((await vp("/ou_nobody/ask", { method: "POST", json: {} })).status).toBe(404);
+    expect((await vp("/not-an-id/ask", { method: "POST", json: {} })).status).toBe(404);
+    expect(await sql`select 1 from voiceprints`).toHaveLength(0);
+
+    await vp("/ou_me/samples", { method: "POST", json: { vector: voice(100), seconds: 30 } });
+    const { joinCode } = await addCompanyB();
+    const wang = (await signIn("good-code", joinCode)).body.token as string;
+    const asWang = (path: string, init: RequestInit & { json?: unknown } = {}) => call(`/v1/voiceprints${path}`, { token: wang, ...init });
+    expect((await json(await asWang(""))).voiceprints).toEqual([]);
+    expect((await asWang("/ou_me", { method: "DELETE" })).status).toBe(404);
+    expect(await json(await asWang("/match", { method: "POST", json: { voices: [{ speakerId: "S2", vector: voice(100), seconds: 40 }] } }))).toEqual({ matches: [] });
   });
 });

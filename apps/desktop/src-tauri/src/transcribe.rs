@@ -185,6 +185,38 @@ pub async fn transcribe_start(
     Ok(())
 }
 
+/// A voiceprint per speaker of a transcribed meeting (`[{speakerId, seconds, vector}]`), worked
+/// out from the recording and its transcript.json. Nothing is written; voices.rs decides where
+/// they may go.
+pub(crate) async fn meeting_voices(app: &AppHandle, meeting_id: &str) -> Result<Vec<Value>, String> {
+    if !storage::valid_id(meeting_id) {
+        return Err(format!("会议编号「{meeting_id}」不合法。"));
+    }
+    let dir = storage::recordings_dir(app)?.join(meeting_id);
+    if !dir.join(TRANSCRIPT_FILE).is_file() {
+        return Err("这场会议的录音或转写结果不在这台电脑上了，取不出声音。".into());
+    }
+    let (events, child) = sidecar(app)?
+        .arg("voices")
+        .arg(&dir)
+        .args(["--json", "--models-dir"])
+        .arg(models_dir(app)?)
+        .spawn()
+        .map_err(|e| format!("本机转写模块启动失败：{e}"))?;
+    let result = follow(events, |mut value| match value["type"].as_str() {
+        Some("done") => Some(Ok(value["voices"].take())),
+        Some("error") => Some(Err(sidecar_error(&value))),
+        _ => None,
+    })
+    .await;
+    // Its stdin stays open until here: closing it means "cancel".
+    drop(child);
+    match result? {
+        Value::Array(voices) => Ok(voices),
+        _ => Err("本机转写模块没有返回声音。".into()),
+    }
+}
+
 /// The transcript, from `transcript.json` if an earlier run finished (and nothing new is
 /// asked for in `hints`), otherwise from the sidecar. A new run replaces the file only once
 /// it succeeds.

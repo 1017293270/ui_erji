@@ -9,11 +9,17 @@ import {
   meetingSave,
   meetingsList,
   onCaptureEvent,
+  onVoiceprintsChanged,
+  voiceprintAsk,
+  voiceprintDelete,
+  voiceprintRemember,
+  voiceprintsList,
   type CaptureEvent,
   type DetectedMeeting,
   type FeishuStatus,
   type ModelsStatus,
   type PrivacySettings,
+  type ServerVoiceprint,
 } from "./native";
 import { selfMention } from "@echomind/minutes-engine";
 import { createProcessor, newMeetingTitle, type Job, type Processor } from "./process";
@@ -37,8 +43,24 @@ const ME_KEY = "echomind.me";
 
 export type TodoItem = Todo & { meetingId: string };
 
-export type VoiceprintStatus = "enrolled" | "pending" | "none";
+/**
+ * `enrolled`: a voiceprint is kept and meetings recognise them. `agreed`: they consented, no
+ * sample yet. `pending`: a consent card is out. `declined`: they said no.
+ */
+export type VoiceprintStatus = "enrolled" | "agreed" | "pending" | "declined" | "none";
 export type Voiceprint = { status: VoiceprintStatus; since?: string; samples?: number };
+
+/** The server's voiceprints, keyed by person id (their open_id in the app). */
+function fromServer(list: ServerVoiceprint[]): Record<string, Voiceprint> {
+  const day = (iso: string | null) => (iso ? localDate(iso) : undefined);
+  return Object.fromEntries(
+    list.map((v): [string, Voiceprint] => {
+      if (v.status === "asked") return [v.openId, { status: "pending", since: day(v.askedAt) }];
+      if (v.status === "declined") return [v.openId, { status: "declined", since: day(v.answeredAt) }];
+      return [v.openId, { status: v.enrolled ? "enrolled" : "agreed", since: day(v.answeredAt), samples: v.samples }];
+    }),
+  );
+}
 
 export type Recording = {
   startedAt: string;
@@ -95,6 +117,7 @@ export type Action =
   | { type: "pushTodos"; meetingId: string; ids: string[]; taskIds?: Record<string, string> }
   | { type: "toggleDone"; id: string }
   | { type: "setVoiceprint"; personId: string; voiceprint: Voiceprint }
+  | { type: "voiceprints"; voiceprints: Record<string, Voiceprint> }
   | { type: "capture"; event: CaptureEvent; keepMeeting: boolean }
   | { type: "detected"; meeting: DetectedMeeting | null }
   | { type: "testing"; on: boolean }
@@ -323,6 +346,8 @@ function reducer(state: State, action: Action): State {
       };
     case "setVoiceprint":
       return { ...state, voiceprints: { ...state.voiceprints, [action.personId]: action.voiceprint } };
+    case "voiceprints":
+      return { ...state, voiceprints: action.voiceprints };
     case "capture":
       return onCapture(state, action.event, action.keepMeeting);
     case "detected":
@@ -389,6 +414,12 @@ type Store = State & {
   process: Processor["retry"];
   rediarize: Processor["rediarize"];
   downloadModels: Processor["download"];
+  /** Reads the company's voiceprints from the server again (the app only). */
+  refreshVoiceprints: () => Promise<void>;
+  /** After naming a speaker with 「记住声音」 ticked: keep the voice, or ask the person first. */
+  rememberVoice: (meetingId: string, speakerId: string, personId: string) => Promise<void>;
+  askVoiceprint: (personId: string) => Promise<void>;
+  deleteVoiceprint: (personId: string) => Promise<void>;
 };
 
 const StoreContext = createContext<Store | null>(null);
@@ -435,6 +466,8 @@ export function StoreProvider({ children, recorderWindow = false }: { children: 
     };
   }, [main, processor]);
 
+  const voiceprintActions = useMemo(() => voiceprintsFor({ get: () => latest.current, dispatch }), []);
+
   // Signing in (or switching accounts) brings that company's directory.
   const openId = state.feishu?.user?.openId;
   useEffect(() => {
@@ -443,6 +476,13 @@ export function StoreProvider({ children, recorderWindow = false }: { children: 
       .then((people) => dispatch({ type: "directory", people }))
       .catch(() => {});
   }, [main, openId]);
+
+  // And its voiceprints; samples waiting for someone's consent go out on the way, and later
+  // in the background.
+  useEffect(() => {
+    if (main && openId) void voiceprintActions.refreshVoiceprints();
+  }, [main, openId, voiceprintActions]);
+  useEffect(() => (main ? onVoiceprintsChanged(() => void voiceprintActions.refreshVoiceprints()) : undefined), [main, voiceprintActions]);
 
   // Write each meeting that changed, a moment after the last change.
   const { meetings, todos, loaded } = state;
@@ -498,11 +538,78 @@ export function StoreProvider({ children, recorderWindow = false }: { children: 
       process: processor.retry,
       rediarize: processor.rediarize,
       downloadModels: processor.download,
+      ...voiceprintActions,
     }),
-    [state, processor],
+    [state, processor, voiceprintActions],
   );
 
   return <StoreContext.Provider value={store}>{children}</StoreContext.Provider>;
+}
+
+/** Voiceprints through the server (docs/voiceprints.md). Outcomes are told in toasts. */
+function voiceprintsFor({ get, dispatch }: { get: () => State; dispatch: (action: Action) => void }) {
+  const toast = (text: string, tone: Toast["tone"] = "default") => dispatch({ type: "toast", text, tone });
+  const nameOf = (personId: string) => get().people.find((p) => p.id === personId)?.name ?? "对方";
+  const message = (e: unknown) => String(e).replace(/。$/, "");
+
+  const refreshVoiceprints = async () => {
+    if (!LIVE) return;
+    try {
+      dispatch({ type: "voiceprints", voiceprints: fromServer(await voiceprintsList()) });
+    } catch (e) {
+      console.warn("voiceprints not loaded:", e);
+    }
+  };
+
+  const rememberVoice = async (meetingId: string, speakerId: string, personId: string) => {
+    const name = nameOf(personId);
+    const title = get().meetings.find((m) => m.id === meetingId)?.title;
+    try {
+      const outcome = await voiceprintRemember(meetingId, speakerId, personId, title);
+      const self = personId === get().me;
+      switch (outcome.status) {
+        case "saved":
+          toast(self ? "已记住你的声音，以后开会会自动认出你。" : `已把这段声音加进${name}的声纹。`, "success");
+          break;
+        case "asked":
+          toast(`已给${name}发了飞书卡片，${name}点同意后，这段声音会自动存进声纹。`, "success");
+          break;
+        case "waiting":
+          toast(`之前已经给${name}发过同意卡片，${name}点同意后，这段声音会自动存进声纹。`);
+          break;
+        case "declined":
+          toast(`${name}没有同意保存声纹，这段声音没有保存。`);
+          break;
+      }
+    } catch (e) {
+      toast(`没能记住${name}的声音：${message(e)}。`, "error");
+    }
+    await refreshVoiceprints();
+  };
+
+  const askVoiceprint = async (personId: string) => {
+    const name = nameOf(personId);
+    try {
+      await voiceprintAsk(personId);
+      toast(`已给${name}发了飞书卡片，${name}点同意后，下次给${name}命名时就会记住声音。`, "success");
+    } catch (e) {
+      toast(`没能发出卡片：${message(e)}。`, "error");
+    }
+    await refreshVoiceprints();
+  };
+
+  const deleteVoiceprint = async (personId: string) => {
+    const name = nameOf(personId);
+    try {
+      await voiceprintDelete(personId);
+      toast(personId === get().me ? "已删除你的声纹。" : `已删除${name}的声纹，以后的会议里需要重新命名。`);
+    } catch (e) {
+      toast(`没能删除声纹：${message(e)}。`, "error");
+    }
+    await refreshVoiceprints();
+  };
+
+  return { refreshVoiceprints, rememberVoice, askVoiceprint, deleteVoiceprint };
 }
 
 export function useStore(): Store {

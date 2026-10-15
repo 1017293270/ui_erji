@@ -9,6 +9,7 @@ import {
   transcribeDownload,
   transcribeModels,
   transcribeStart,
+  voicesMatch,
   type ModelsStatus,
   type TranscribeHints,
   type TranscribeStage,
@@ -27,7 +28,7 @@ export type Job = {
   /** "models": waiting for the speech models to be downloaded. */
   step: JobStep;
   /** The transcriber's pass, or the minutes engine's call. */
-  stage?: TranscribeStage | PipelineStep | "attendees";
+  stage?: TranscribeStage | PipelineStep | "voices" | "attendees";
   /** 0–1 within the stage. */
   progress: number;
   error?: string;
@@ -38,6 +39,7 @@ export const STAGE_LABEL: Record<NonNullable<Job["stage"]>, string> = {
   speech: "正在找出说话的片段",
   speakers: "正在区分说话人",
   text: "正在把语音转成文字",
+  voices: "正在用声纹认出说话人",
   attendees: "正在从飞书日历找参会人",
   chapters: "DeepSeek 正在划分议题",
   minutes: "DeepSeek 正在写纪要",
@@ -117,7 +119,11 @@ export function createProcessor({ get, dispatch }: { get: () => State; dispatch:
         }
         setJob(id, { step, stage: "prepare", progress: 0 });
         const progress = throttle((stage: TranscribeStage, p: number) => setJob(id, { step: "transcribe", stage, progress: p }));
-        const transcript = claimMic(await transcribe(id, progress, hints), get().me);
+        let transcript = claimMic(await transcribe(id, progress, hints), get().me);
+        if (get().feishu?.user) {
+          setJob(id, { step, stage: "voices", progress: 0 });
+          transcript = await recognise(id, transcript, get().people);
+        }
         dispatch({ type: "transcript", meetingId: id, transcript });
         meeting = { ...meeting, transcript };
         transcribed = true;
@@ -223,6 +229,28 @@ async function transcribe(id: string, progress: (stage: TranscribeStage, p: numb
   } finally {
     stop();
   }
+}
+
+/**
+ * Speakers the company's voiceprints recognise get their names. Best effort: no voiceprints,
+ * no server, no problem. Names already given (「我」 on the mic) stay, and nobody gets two voices.
+ */
+async function recognise(meetingId: string, transcript: Transcript, people: Person[]): Promise<Transcript> {
+  let matches;
+  try {
+    matches = await voicesMatch(meetingId);
+  } catch (e) {
+    console.warn("voiceprint matching skipped:", message(e));
+    return transcript;
+  }
+  const taken = new Set(transcript.speakers.map((s) => s.personId).filter(Boolean));
+  const speakers = transcript.speakers.map((s) => {
+    const match = matches.find((m) => m.speakerId === s.id);
+    if (s.personId || !match || taken.has(match.openId) || !people.some((p) => p.id === match.openId)) return s;
+    taken.add(match.openId);
+    return { ...s, personId: match.openId, source: "voiceprint" as const, confidence: match.score };
+  });
+  return { ...transcript, speakers };
 }
 
 /** The voice the transcriber took for the person recording (S1 「我」) is linked to them. */

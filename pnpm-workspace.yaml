@@ -3,3 +3,5 @@ packages:
   - packages/*
 allowBuilds:
   esbuild: false
+  # Its postinstall only checks the versions of its own CLI tools, which nothing here uses.
+  protobufjs: false

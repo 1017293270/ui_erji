@@ -14,6 +14,7 @@ import { type LlmDeps, LlmUnreachable, proxyChat, RateLimit } from "./llm";
 import { log } from "./log";
 import { directory, upsertSignedIn } from "./people";
 import { createSession, findSession, type Me, revokeSession } from "./sessions";
+import { addSample, askConsent, deleteVoiceprint, listVoiceprints, matchVoices, VoiceprintError } from "./voiceprints";
 
 export type ApiDeps = { sql: Sql; companies: Companies; dataKey: Buffer | null; llm: LlmDeps };
 
@@ -80,11 +81,24 @@ const NewTask = z.strictObject({
   assigneeId: z.string().max(100),
 });
 
+/** A CAM++ embedding is 192 numbers; anything from 64 to 1024 is accepted and checked later. */
+const Vector = z.array(z.number()).min(64).max(1024);
+const Seconds = z.number().min(0).max(36_000);
+const VoiceSample = z.strictObject({ vector: Vector, seconds: Seconds });
+const VoiceMatch = z.strictObject({
+  voices: z.array(z.strictObject({ speakerId: z.string().min(1).max(16), vector: Vector, seconds: Seconds })).max(40),
+});
+const ConsentRequest = z.strictObject({ meeting: z.string().trim().max(200).nullish() });
+
 /** Everything under /v1. All of it needs a session except finding out how to sign in. */
 export function api(deps: ApiDeps): Hono<Env> {
   const app = new Hono<Env>();
   const grants = { sql: deps.sql, companies: deps.companies, key: deps.dataKey };
+  const voiceprints = { sql: deps.sql, companies: deps.companies, key: deps.dataKey };
   const llmLimit = new RateLimit(30, 60_000);
+  // Consent cards land in colleagues' chats: one person sends a handful an hour at most.
+  const askLimit = new RateLimit(20, 3_600_000);
+  const matchLimit = new RateLimit(30, 60_000);
   // Join codes name customers: wrong guesses from one address are slowed to a crawl. Right ones
   // never count, so a whole office signing in at once is not held up.
   const wrongCodes = new RateLimit(20, 60_000);
@@ -208,6 +222,65 @@ export function api(deps: ApiDeps): Hono<Env> {
       return c.json(await asUser(grants, me.personId, (token) => createTask(feishu, token.accessToken, body)));
     } catch (e) {
       return feishuFailure(c, e, "user");
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Voiceprints, within the caller's company
+
+  const voiceprintFailure = (c: Context, e: unknown) =>
+    e instanceof VoiceprintError ? c.json(fail(e.code, e.message), e.status) : feishuFailure(c, e, "app");
+
+  /** The colleague in the path: an open_id, or a 404. */
+  const colleagueId = (c: Context): string => {
+    const id = c.req.param("openId") ?? "";
+    if (!/^ou_[0-9a-z]{1,60}$/i.test(id)) throw new VoiceprintError("not_found", 404, "通讯录里没有这个人。");
+    return id;
+  };
+
+  app.get("/voiceprints", auth, async (c) => c.json({ voiceprints: await listVoiceprints(deps.sql, c.get("me").tenantId) }));
+
+  app.post("/voiceprints/match", auth, bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
+    const me = c.get("me");
+    if (!matchLimit.take(me.personId)) return c.json(fail("rate_limited", "识别声音的请求太频繁了，请等一分钟再试。"), 429);
+    const input = await readJson(c, VoiceMatch);
+    if (input instanceof Response) return input;
+    try {
+      return c.json({ matches: await matchVoices(voiceprints, me, input.voices) });
+    } catch (e) {
+      return voiceprintFailure(c, e);
+    }
+  });
+
+  app.post("/voiceprints/:openId/ask", auth, async (c) => {
+    const me = c.get("me");
+    const input = await readJson(c, ConsentRequest);
+    if (input instanceof Response) return input;
+    try {
+      const openId = colleagueId(c);
+      if (!askLimit.take(me.personId)) return c.json(fail("rate_limited", "这一小时发的同意卡片太多了，请稍后再发。"), 429);
+      return c.json(await askConsent(voiceprints, me, openId, input.meeting ?? null));
+    } catch (e) {
+      return voiceprintFailure(c, e);
+    }
+  });
+
+  app.post("/voiceprints/:openId/samples", auth, bodyLimit({ maxSize: 64 * 1024 }), async (c) => {
+    const input = await readJson(c, VoiceSample);
+    if (input instanceof Response) return input;
+    try {
+      return c.json(await addSample(voiceprints, c.get("me"), colleagueId(c), input));
+    } catch (e) {
+      return voiceprintFailure(c, e);
+    }
+  });
+
+  app.delete("/voiceprints/:openId", auth, async (c) => {
+    try {
+      await deleteVoiceprint(voiceprints, c.get("me"), colleagueId(c));
+      return c.json({ ok: true });
+    } catch (e) {
+      return voiceprintFailure(c, e);
     }
   });
 

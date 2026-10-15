@@ -199,6 +199,55 @@ export async function companiesReplaceSecret(id: string, appSecret: string): Pro
   return invoke("companies_replace_secret", { id, appSecret });
 }
 
+/* ------------------------------------------------------------------ */
+/* Voiceprints, kept by the server with each person's consent.         */
+/* The voices themselves stay in Rust; this page only sees outcomes.   */
+/* ------------------------------------------------------------------ */
+
+/** A colleague with a voiceprint or a consent card out (people without one are not listed). */
+export type ServerVoiceprint = {
+  openId: string;
+  status: "asked" | "agreed" | "declined";
+  /** A sample has been kept: meetings recognise them. */
+  enrolled: boolean;
+  samples: number;
+  seconds: number;
+  askedBy: string | null;
+  askedAt: string | null;
+  answeredAt: string | null;
+};
+
+/** `asked`: a consent card went out; `waiting`: one had already; either way the sample waits for their answer. */
+export type RememberOutcome = { status: "saved" | "asked" | "waiting" | "declined"; voiceprint?: ServerVoiceprint };
+
+export type VoiceMatch = { speakerId: string; openId: string; score: number };
+
+export async function voiceprintsList(): Promise<ServerVoiceprint[]> {
+  return invoke("voiceprints_list");
+}
+
+export async function voiceprintAsk(openId: string, meeting?: string): Promise<ServerVoiceprint> {
+  return invoke("voiceprint_ask", { openId, meeting: meeting ?? null });
+}
+
+export async function voiceprintDelete(openId: string): Promise<void> {
+  await invoke("voiceprint_delete", { openId });
+}
+
+export async function voiceprintRemember(meetingId: string, speakerId: string, openId: string, meetingTitle?: string): Promise<RememberOutcome> {
+  return invoke("voiceprint_remember", { meetingId, speakerId, openId, meetingTitle: meetingTitle ?? null });
+}
+
+/** Who the voices of a transcribed meeting belong to, by the company's voiceprints. */
+export async function voicesMatch(meetingId: string): Promise<VoiceMatch[]> {
+  return invoke("voices_match", { meetingId });
+}
+
+/** A sample that waited for someone's consent went out in the background. */
+export function onVoiceprintsChanged(handler: () => void): () => void {
+  return isTauri ? subscribe<null>("voiceprints://changed", handler) : () => {};
+}
+
 /** Every active member of the company, as people todos can belong to. */
 export async function feishuDirectory(refresh = false): Promise<Person[]> {
   return invoke<Person[]>("feishu_directory", { refresh });

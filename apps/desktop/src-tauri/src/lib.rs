@@ -15,6 +15,7 @@ mod storage;
 mod testing;
 mod transcribe;
 mod tray;
+mod voiceprints;
 
 use std::ffi::OsStr;
 
@@ -102,10 +103,16 @@ pub fn run() {
             transcribe::transcribe_models,
             transcribe::transcribe_download,
             transcribe::transcribe_start,
+            voiceprints::voiceprints_list,
+            voiceprints::voiceprint_ask,
+            voiceprints::voiceprint_delete,
+            voiceprints::voiceprint_remember,
+            voiceprints::voices_match,
             show_main_window,
         ])
         .setup(|app| {
             tray::create(app.handle())?;
+            voiceprints::start_sending(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {

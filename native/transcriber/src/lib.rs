@@ -14,6 +14,7 @@ mod speakers;
 mod speech;
 mod text;
 mod transcript;
+mod voices;
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -24,6 +25,7 @@ use serde::Serialize;
 pub use error::{Error, ErrorKind};
 pub use models::{ModelInfo, ModelStatus, MIRROR_ENV};
 pub use transcript::{Scene, Segment, Speaker, Track, Transcript};
+pub use voices::{voices, Voice};
 
 use recording::{Recording, SAMPLE_RATE};
 use speech::Region;

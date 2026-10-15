@@ -110,6 +110,11 @@ fn remember_company(app: &AppHandle, value: &Value) {
     }
 }
 
+/// The open_id of whoever is signed in to the server on this computer.
+pub(crate) fn signed_in_open_id(app: &AppHandle) -> Option<String> {
+    load(app).map(|s| s.profile.open_id)
+}
+
 /// Signs in to another company next time.
 pub fn forget_company(app: &AppHandle) {
     if let Ok(path) = company_path(app) {
