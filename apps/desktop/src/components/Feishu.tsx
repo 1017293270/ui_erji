@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { cn } from "@echomind/ui";
-import { feishuCancel, feishuForgetCompany, feishuLogin, feishuLogout, feishuStatus, type FeishuProfile } from "../lib/native";
+import { feishuCancel, feishuForgetCompany, feishuLogin, feishuLogout, feishuStatus, type FeishuProfile, type SavedCompany } from "../lib/native";
 import { useStore } from "../lib/store";
 
 /**
@@ -45,15 +45,21 @@ export function useFeishuLogin() {
     store.toast("已退出飞书登录");
   };
 
-  /** Forgets the company, so the next sign-in asks for a join code. */
+  /** Signs out if need be and forgets the company, so the next sign-in asks for a join code. */
   const switchCompany = async () => {
+    const signedIn = !!store.feishu?.user;
+    if (signedIn) await feishuLogout();
     await feishuForgetCompany();
     setError(null);
-    if (store.feishu) store.dispatch({ type: "feishu", status: { ...store.feishu, company: null } });
+    if (store.feishu) store.dispatch({ type: "feishu", status: { ...store.feishu, user: null, company: null } });
+    if (signedIn) store.toast("已退出登录。输入另一家公司的加入码，再用飞书登录。");
   };
 
   return { busy, error, login, cancel, logout, switchCompany };
 }
+
+/** What to call a company: its name, or its join code when it has none (the server's own company). */
+export const companyLabel = (company: SavedCompany) => company.name || `加入码 ${company.joinCode}`;
 
 /** Enough characters for a join code; spaces and dashes do not count. */
 export const joinCodeReady = (code: string) => code.replace(/[\s-]/g, "").length >= 6;

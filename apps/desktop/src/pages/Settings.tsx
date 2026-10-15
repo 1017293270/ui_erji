@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Copy, Download, FolderOpen } from "lucide-react";
 import { applyTheme, cn, readTheme, Toolbox, type ThemeChoice } from "@echomind/ui";
-import { FeishuAvatar, JoinCodeInput, joinCodeReady, useFeishuLogin } from "../components/Feishu";
+import { companyLabel, FeishuAvatar, JoinCodeInput, joinCodeReady, useFeishuLogin } from "../components/Feishu";
 import { PageHeader } from "../components/Shell";
 import { Badge, Button, Segmented, Toggle } from "../components/ui";
 import {
@@ -260,7 +260,19 @@ function FeishuAccountRow() {
             {missing ? <Badge tone="clay" dot>需要重新登录</Badge> : <Badge tone="success" dot>已连接</Badge>}
           </p>
           <p className={cn("mt-0.5 text-[12.5px]", error ? "text-destructive" : missing ? "text-clay-text" : "truncate text-muted-foreground")}>
-            {error ?? (missing ? `还没有${missing}权限，重新登录一次就能授予。` : [company?.name, user.email ?? user.enName].filter(Boolean).join(" · ") || "飞书账号")}
+            {error ??
+              (missing ? (
+                `还没有${missing}权限，重新登录一次就能授予。`
+              ) : (
+                <>
+                  {[company ? companyLabel(company) : null, user.email ?? user.enName].filter(Boolean).join(" · ") || "飞书账号"}
+                  {feishu.server ? (
+                    <button className="no-drag ml-1.5 text-clay-text underline-offset-2 hover:underline" onClick={() => void switchCompany()}>
+                      换一家公司
+                    </button>
+                  ) : null}
+                </>
+              ))}
           </p>
         </div>
         {missing ? (
@@ -291,7 +303,7 @@ function FeishuAccountRow() {
           "先输入公司加入码（向你们公司的 EchoMind 管理员要），再用飞书登录。"
         ) : company ? (
           <>
-            登录到 {company.name ?? "你们公司"}，用于读取通讯录和日历参会人、创建飞书任务。
+            登录到 {company.name || `加入码为 ${company.joinCode} 的公司`}，用于读取通讯录和日历参会人、创建飞书任务。
             <button className="no-drag ml-1.5 text-clay-text underline-offset-2 hover:underline" onClick={() => void switchCompany()}>
               换一家公司
             </button>
